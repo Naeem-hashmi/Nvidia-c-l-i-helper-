@@ -1,0 +1,40 @@
+[project]
+name = "cliHelper"
+dynamic = ["version"]
+description = "CLI Helper: NVDA add-on for command line interfaces"
+requires-python = ">=3.13"
+license = {file = "COPYING.txt"}
+# Not installed as a library; the dependency groups are the tools used to build the add-on.
+dependencies = []
+
+[dependency-groups]
+build = [
+	"scons==4.10.1",
+	"Markdown==3.10",
+]
+lint = [
+	"ruff==0.14.5",
+]
+dev = [
+	{ include-group = "build" },
+	{ include-group = "lint" },
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 110
+# The add-on itself must run on NVDA 2019.3 (Python 3.7); the build scripts use the build machine's Python.
+target-version = "py37"
+builtins = ["_", "ngettext", "pgettext", "npgettext"]
+include = ["addon/**/*.py", "tests/**/*.py"]
+
+[tool.ruff.format]
+indent-style = "tab"
+line-ending = "lf"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["W191", "E402", "E501"]
+logger-objects = ["logHandler.log"]
