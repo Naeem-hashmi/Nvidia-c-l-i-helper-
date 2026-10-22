@@ -7,6 +7,8 @@
 
 import time
 
+import api
+
 import addonHandler
 import core
 import speech
@@ -23,8 +25,10 @@ from . import progress
 from . import terminal
 from .common import (
 	FOCUS_UNKNOWN_MESSAGE,
+	answerHint,
 	conf,
 	describeChoice,
+	duration,
 	errorRe,
 	plainQuestion,
 	promptRe,
@@ -44,6 +48,8 @@ KEY_QUIET = 1.5
 MENU_GRACE = 0.6
 #: While a command runs, how often (seconds) at most to look at the screen for the returning shell prompt.
 FINISH_CHECK_INTERVAL = 1.0
+#: While a command runs, how often (ms) to check whether it finished or has been silent for long.
+WATCH_INTERVAL_MS = 2000
 #: After seeing a progress bar or spinner, numbers and fragments count as progress for this many seconds.
 PROGRESS_LINGER = 3.0
 #: While progress is redrawn in fragments, how often (seconds) at most to read the screen for the percentage.
@@ -104,6 +110,15 @@ class CLITerminal(NVDAObject):
 	_cliLastSounds = None
 
 	_cliMenuMissSince = None
+	#: The running command as typed, and its latest activity, for the status command.
+	_cliCommandText = None
+	_cliLastCommand = None
+	_cliLastOutputTime = 0.0
+	_cliLastOutputLine = ""
+	_cliLastProgress = None
+	_cliLastProgressTime = 0.0
+	_cliLastStatusSpoken = 0.0
+	_cliWatchToken = 0
 
 	def initOverlayClass(self):
 		self._cliScreenCache = (0.0, None)
@@ -199,24 +214,29 @@ class CLITerminal(NVDAObject):
 			if menu.kind == parsing.Menu.TOGGLE:
 				# Translators: Announced for a yes/no style prompt, followed by its two choices.
 				parts.append(
-					_("toggle, {first} or {second}").format(
+					_("{first} or {second}").format(
 						first=menu.items[0].label,
 						second=menu.items[1].label,
 					)
 				)
+			elif menu.kind == parsing.Menu.CHECKBOX:
+				# Translators: Announced when a list of checkboxes appears, e.g. "4 choices, several can be checked".
+				parts.append(_("{count} choices, several can be checked").format(count=len(menu.items)))
 			else:
-				# Translators: Announced when a list of choices appears, e.g. "list, 4 choices".
-				parts.append(_("list, {count} choices").format(count=len(menu.items)))
+				# Translators: Announced when a list of choices appears, e.g. "4 choices".
+				parts.append(_("{count} choices").format(count=len(menu.items)))
 		item = menu.focused
 		if item is None and menu.kind == parsing.Menu.CHECKBOX and previousState and not isNew:
 			# Focus is shown only by colour and could not be read; report the choice that was toggled.
-			changed = [i for i, (old, new) in enumerate(zip(previousState[1], state[1])) if old != new]
+			changed = [i for i, (old, new) in enumerate(zip(previousState[2], state[2])) if old != new]
 			if len(changed) == 1:
 				item = menu.items[changed[0]]
 		if item is not None:
 			parts.append(item.label if menu.kind == parsing.Menu.TOGGLE else describeChoice(menu, item))
 		elif afterKey or (isNew and menu.kind == parsing.Menu.TOGGLE):
 			parts.append(FOCUS_UNKNOWN_MESSAGE)
+		if isNew and conf()["promptHints"]:
+			parts.append(answerHint(menu))
 		if parts:
 			speech.cancelSpeech()
 			ui.message(", ".join(parts))
@@ -354,6 +374,15 @@ class CLITerminal(NVDAObject):
 	def script_cliRightArrow(self, gesture):
 		self.cliMenuKey(gesture, "script_caret_moveByCharacter")
 
+	def event_typedCharacter(self, ch):
+		original = getattr(super(CLITerminal, self), "event_typedCharacter", None)
+		if original is not None:
+			original(ch)
+		# y and n answer yes/no prompts, Space checks a choice, a checks all in some libraries.
+		if ch in "yYnN aA" and conf()["interactivePrompts"] and self.cliMenuLive():
+			self._cliSuppressUntil = time.time() + KEY_QUIET
+			self._cliStartPoll(None, afterKey=True)
+
 	# Command start and finish
 
 	@script(gestures=["kb:enter", "kb:numpadEnter"])
@@ -368,6 +397,12 @@ class CLITerminal(NVDAObject):
 		if command:
 			self._cliCommandStart = time.time()
 			self._cliCommandSawError = False
+			self._cliCommandText = command
+			self._cliLastOutputTime = 0.0
+			self._cliLastOutputLine = ""
+			self._cliLastProgress = None
+			self._cliLastStatusSpoken = 0.0
+			self._cliStartWatch()
 		if self._cliMenuActive:
 			# Enter answers the prompt: what follows is ordinary output (or the next question).
 			self.cliForgetMenu()
@@ -392,6 +427,7 @@ class CLITerminal(NVDAObject):
 			if not self.cliPromptAtBottom():
 				return
 		self._cliCommandStart = None
+		self._cliLastCommand = self._cliCommandText
 		self.cliAnnounceFinished(now - start)
 
 	def cliPromptAtBottom(self):
@@ -438,6 +474,7 @@ class CLITerminal(NVDAObject):
 		if self._cliCommandStart is not None and self.cliPromptAtBottom():
 			start = self._cliCommandStart
 			self._cliCommandStart = None
+			self._cliLastCommand = self._cliCommandText
 			core.callLater(300, self.cliAnnounceFinished, time.time() - start)
 
 	# Automatic reading of new output
@@ -445,6 +482,7 @@ class CLITerminal(NVDAObject):
 	def _cliProcessLines(self, lines):
 		"""Everything the add-on does with a batch of new text; returns the lines NVDA should still speak."""
 		self._cliCheckFinished(lines)
+		self._cliNoteActivity(lines)
 		if conf()["quietMode"]:
 			return []
 		lines = self._cliFilterMenuText(lines)
@@ -453,7 +491,121 @@ class CLITerminal(NVDAObject):
 			self._cliPlaySounds(lines)
 		return lines
 
+	# Status of the running command
+
+	def _cliNoteActivity(self, lines):
+		if not any(line.strip() for line in lines):
+			return
+		self._cliLastOutputTime = time.time()
+		for line in reversed(lines):
+			if line.strip() and not progress.isProgressText(line):
+				self._cliLastOutputLine = line.strip()
+				break
+
+	def _cliStartWatch(self):
+		"""While a command runs, notice when it ends, and say its status when it is silent for long."""
+		self._cliWatchToken += 1
+		core.callLater(WATCH_INTERVAL_MS, self._cliWatch, self._cliWatchToken)
+
+	def _cliWatch(self, token):
+		if token != self._cliWatchToken or self._cliCommandStart is None:
+			return
+		# Commands that print nothing at the end still bring the shell prompt back.
+		self._cliCheckFinished([])
+		if self._cliCommandStart is None:
+			return
+		now = time.time()
+		every = conf()["statusEverySeconds"]
+		lastActivity = max(self._cliCommandStart, self._cliLastOutputTime, self._cliLastStatusSpoken)
+		if every and now - lastActivity >= every and self._cliIsFocused() and not self.cliMenuLive():
+			self._cliLastStatusSpoken = now
+			ui.message(self.cliStatusText(brief=True))
+		core.callLater(WATCH_INTERVAL_MS, self._cliWatch, token)
+
+	def _cliIsFocused(self):
+		try:
+			focus = api.getFocusObject()
+			return focus is self or (
+				isinstance(focus, CLITerminal) and focus.windowHandle == self.windowHandle
+			)
+		except Exception:
+			return False
+
+	def cliStatusText(self, brief=False):
+		"""What the terminal is doing: running (how long, last output), waiting for an answer, or ready."""
+		now = time.time()
+		menu, lines = None, []
+		try:
+			if conf()["interactivePrompts"]:
+				menu, lines = self.cliDetectMenu()
+			else:
+				lines = terminal.getScreenLines(self)
+		except Exception:
+			log.debugWarning("CLI Helper: could not read the screen for the status", exc_info=True)
+		if menu is not None:
+			# Translators: Status when an interactive prompt waits for an answer.
+			parts = [_("Waiting for your choice")]
+			if menu.question:
+				parts.append(plainQuestion(menu))
+			if menu.focused is not None:
+				parts.append(menu.focused.label)
+			parts.append(answerHint(menu))
+			return ". ".join(parts)
+		content = [line for line in lines if line.strip()]
+		lastCommand = parsing.commandFromLine(content[-1], promptRe()) if content else None
+		# An empty prompt means the shell waits for a command. Right after Enter, the bottom line is
+		# still the prompt with the command typed on it, and the command is running.
+		emptyPrompt = lastCommand == ""
+		running = self._cliCommandStart is not None and not emptyPrompt
+		atPrompt = lastCommand is not None and not running
+		question = None if atPrompt else parsing.waitingQuestion(lines, promptRe())
+		if running:
+			if self._cliCommandText:
+				# Translators: Status of a running command, e.g. "npm install running for 2 minutes 5 seconds".
+				text = _("{command} running for {time}").format(
+					command=self._cliCommandText, time=duration(now - self._cliCommandStart)
+				)
+			else:
+				# Translators: Status of a running command whose name is not known.
+				text = _("Running for {time}").format(time=duration(now - self._cliCommandStart))
+			parts = [text]
+			if question:
+				# Translators: Status when a program waits for a typed answer; {question} is its question.
+				parts.append(_("waiting for your answer: {question}").format(question=question))
+				return ", ".join(parts)
+			if self._cliLastProgress is not None and now - self._cliLastProgressTime < 15:
+				name, percent = self._cliLastProgress
+				# Translators: Progress in the status, e.g. "pulling 45 percent".
+				parts.append(_("{name} {percent} percent").format(name=name, percent=percent).strip())
+			if self._cliLastOutputTime:
+				# Translators: Status: how long ago the command printed something.
+				parts.append(_("last output {time} ago").format(time=duration(now - self._cliLastOutputTime)))
+				if not brief and self._cliLastOutputLine:
+					parts.append(self._cliLastOutputLine)
+			else:
+				# Translators: Status: the command has printed nothing yet.
+				parts.append(_("no output yet"))
+			return ", ".join(parts)
+		if atPrompt:
+			# Translators: Status when the shell waits for a command.
+			text = _("Ready for a command")
+			if self._cliLastCommand:
+				# Translators: Status: the last command that was run.
+				text += ", " + _("last command: {command}").format(command=self._cliLastCommand)
+			return text
+		if question:
+			# Translators: Status when a program waits for a typed answer; {question} is its question.
+			return _("Waiting for your answer: {question}").format(question=question)
+		last = content[-1].strip() if content else ""
+		# Translators: Status when it is not clear whether something runs; {line} is the last line on screen.
+		return _("Busy or waiting for input. Last line: {line}").format(line=last)
+
 	# Progress bars and spinners
+
+	def _cliFeedProgress(self, tracker, name, percent, now):
+		self._cliLastProgress = (name, int(percent))
+		self._cliLastProgressTime = now
+		self._cliRunProgressActions(tracker.feed(name, percent, now))
 
 	def _cliTracker(self, mode):
 		key = (mode, conf()["progressStep"], conf()["progressInterval"])
@@ -498,7 +650,7 @@ class CLITerminal(NVDAObject):
 			self._cliProgressUntil = now + PROGRESS_LINGER
 			percent = progress.extractPercent(line) if (strong or progress.isProgressLine(line)) else None
 			if percent is not None:
-				self._cliRunProgressActions(tracker.feed(progress.label(line), percent, now))
+				self._cliFeedProgress(tracker, progress.label(line), percent, now)
 				fed = True
 			elif progress.isSpinnerLine(line):
 				self._cliSpinner(line, mode, now)
@@ -523,7 +675,7 @@ class CLITerminal(NVDAObject):
 			for line in reversed(screen[-15:]):
 				percent = progress.extractPercent(line) if progress.isProgressLine(line) else None
 				if percent is not None:
-					self._cliRunProgressActions(tracker.feed(progress.label(line), percent, now))
+					self._cliFeedProgress(tracker, progress.label(line), percent, now)
 					break
 		return kept
 

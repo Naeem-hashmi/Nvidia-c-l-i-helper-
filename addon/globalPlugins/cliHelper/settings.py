@@ -83,6 +83,20 @@ class SettingsPanel(settingsDialogs.SettingsPanel):
 			# Translators: A setting of the add-on.
 			_("Support &interactive prompts (selection lists, checkboxes, yes/no toggles)"),
 		)
+		self._check(
+			group,
+			"promptHints",
+			# Translators: A setting of the add-on.
+			_("When a prompt appears, say which &keys answer it"),
+		)
+		self._spin(
+			group,
+			"statusEverySeconds",
+			# Translators: A setting of the add-on.
+			_("While a command runs without output, say its status every this many seconds (&0 = never):"),
+			0,
+			600,
+		)
 		self._choice(
 			group,
 			"terminalEntry",

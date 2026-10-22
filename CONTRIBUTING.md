@@ -46,6 +46,6 @@ Open an issue and include:
 
 1. Set `addon_version` and `addon_changelog` in `buildVars.py`, and add a `## x.y.z` section to `changelog.md`.
 2. Update `lastTestedNVDAVersion` in `buildVars.py` if you tested a newer NVDA.
-3. Commit, then tag and push: `git tag v1.3.0` and `git push origin v1.3.0`.
+3. Commit and push, then publish: on GitHub, open Actions > build addon > Run workflow, tick "publish", and run it. (Pushing a tag such as `v1.4.0` does the same.)
 4. GitHub Actions builds the add-on and publishes a release with `cliHelper-1.3.0.nvda-addon` and `cliHelper.nvda-addon` attached. Users of the GitHub version are offered the update the next time NVDA starts.
 5. Submit the new version to the NVDA Add-on Store with the [Add-on registration form](https://github.com/nvaccess/addon-datastore/issues/new?template=registerAddon.yml), using the versioned download link of the release (for example `https://github.com/Naeem-hashmi/Nvidia-c-l-i-helper-/releases/download/v1.3.0/cliHelper-1.3.0.nvda-addon`).

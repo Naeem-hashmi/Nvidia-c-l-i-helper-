@@ -25,13 +25,15 @@ Speaks interactive prompts (selection lists, checkboxes and yes/no toggles such 
 reads the last command's output, announces when long commands finish, and adds a
 CLI mode with word-processor style reading, selection and copying. Press NVDA+Alt+C, then H for help."""),
 	# version
-	addon_version="1.3.0",
+	addon_version="1.4.0",
 	# Brief changelog for this version
 	# Translators: what's new content for the add-on version to be shown in the add-on store
-	addon_changelog=_("""Fixed: in selection lists, the arrow keys sometimes read the whole list instead of only the new choice.
-New: CLI Helper checks GitHub for new versions once a day and offers to install them (U in CLI mode, or in settings).
-Changed: all beeps and sounds are now off by default; speech says everything. Turn them on in settings.
-Changed: questions of interactive prompts are read without key hints such as "Use arrow-keys"."""),
+	addon_changelog=_("""New: NVDA+Alt+I (or I in CLI mode) says what the terminal is doing: the running command, how long it has run, its last output, or that it waits for an answer.
+New: while a command runs without output, its status is announced every 30 seconds (configurable).
+New: when a menu or question appears, CLI Helper says which keys answer it. Typing y or n in a yes/no question announces the answer.
+Changed: moving through a menu says only the new choice; the question is no longer repeated.
+Fixed: in Word and Excel, NVDA+Alt+C reports comments again.
+Shorter, simpler documentation."""),
 	# Author(s)
 	addon_author="Naeem Hashmi",
 	# URL for the add-on documentation support

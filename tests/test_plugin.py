@@ -144,11 +144,16 @@ def installStubs():
 		pending.append(later)
 		return later
 
-	def runPending():
-		while pending:
-			later = pending.pop(0)
-			if not later.stopped:
-				later.fn(*later.args)
+	def runPending(rounds=50):
+		# Callbacks may schedule more callbacks (polls, the command watch); run a bounded number of rounds.
+		for _round in range(rounds):
+			if not pending:
+				return
+			batch = pending[:]
+			del pending[:]
+			for later in batch:
+				if not later.stopped:
+					later.fn(*later.args)
 
 	_module("core", callLater=callLater, runPending=runPending)
 
@@ -160,7 +165,12 @@ def installStubs():
 
 	class ScriptableBase(object):
 		def __init__(self):
+			# Like NVDA, bind the gestures declared with the script decorator.
 			self._gestureMap = {}
+			for name in dir(type(self)):
+				if name.startswith("script_"):
+					for gesture in getattr(getattr(type(self), name), "gestures", ()):
+						self._gestureMap[gesture.lower()] = getattr(self, name)
 
 		def bindGesture(self, gesture, name):
 			self._gestureMap[gesture.lower()] = getattr(self, "script_" + name)
@@ -259,6 +269,9 @@ def installStubs():
 	def script(**kwargs):
 		def wrap(fn):
 			fn.__doc__ = kwargs.get("description")
+			fn.gestures = ([kwargs["gesture"]] if "gesture" in kwargs else []) + list(
+				kwargs.get("gestures", ())
+			)
 			return fn
 
 		return wrap
@@ -313,6 +326,8 @@ class Base(unittest.TestCase):
 		CONF["cliHelper"].clear()
 		CONF["cliHelper"].update(
 			interactivePrompts=True,
+			promptHints=False,
+			statusEverySeconds=30,
 			quietMode=False,
 			progressMode="speech",
 			progressStep=25,
@@ -388,7 +403,7 @@ class OverlayTest(Base):
 			]
 		)
 		core.runPending()
-		self.assertEqual(spoken, ["<cancel>", "Pick a router, list, 3 choices, App Router, 1 of 3"])
+		self.assertEqual(spoken, ["<cancel>", "Pick a router, 3 choices, App Router, 1 of 3"])
 
 	def test_fragmentsOfANewQuestionAreNotRead(self):
 		# NVDA's character diff may report only the words that changed between two questions.
@@ -530,6 +545,47 @@ class OverlayTest(Base):
 		):
 			self.assertEqual(cliHelper.plainQuestion(t.SimpleNamespace(question=question)), "Pick a router")
 
+	def test_questionIsSpokenOnceEvenWhenItsHintDisappears(self):
+		# Inquirer shows "(Use arrow keys)" until the first key press, then removes it.
+		CONF["cliHelper"]["promptHints"] = True
+		SCREEN["text"] = "? Pick a router (Use arrow keys)\n\u276f App Router\n  Pages Router"
+		obj = makeTerminal()
+		obj._reportNewLines(["? Pick a router (Use arrow keys)", "\u276f App Router", "  Pages Router"])
+		core.runPending()
+		self.assertEqual(
+			spoken[-1],
+			"Pick a router, 2 choices, App Router, 1 of 2, Up and Down arrows to move, Enter to choose",
+		)
+		after = "? Pick a router\n  App Router\n\u276f Pages Router"
+		obj.script_cliDownArrow(Gesture("kb:downarrow", onSend=lambda: SCREEN.update(text=after)))
+		core.runPending()
+		self.assertEqual(spoken[-1], "Pages Router, 2 of 2")
+
+	def test_scrollingListDoesNotRepeatTheQuestion(self):
+		SCREEN["text"] = "? Pick\n\u276f A\n  B\n  C"
+		obj = makeTerminal()
+		obj._reportNewLines(["? Pick", "\u276f A", "  B", "  C"])
+		core.runPending()
+		after = "? Pick\n  C\n\u276f D\n  E"
+		obj.script_cliDownArrow(Gesture("kb:downarrow", onSend=lambda: SCREEN.update(text=after)))
+		core.runPending()
+		self.assertEqual(spoken[-1], "D, 2 of 3")
+
+	def test_yesNoHintAndTypedAnswer(self):
+		CONF["cliHelper"]["promptHints"] = True
+		SCREEN["text"] = "\u25c6  Install dependencies?\n\u2502  \u25cf Yes / \u25cb No\n\u2514"
+		obj = makeTerminal()
+		obj._reportNewLines(["\u25c6  Install dependencies?", "\u2502  \u25cf Yes / \u25cb No"])
+		core.runPending()
+		self.assertEqual(
+			spoken[-1],
+			"Install dependencies?, Yes or No, Yes, Left and Right arrows to choose, or type y or n, then Enter",
+		)
+		SCREEN["text"] = "\u25c6  Install dependencies?\n\u2502  \u25cb Yes / \u25cf No\n\u2514"
+		obj.event_typedCharacter("n")
+		core.runPending()
+		self.assertEqual(spoken[-1], "No")
+
 	def test_checkboxToggleSpeaksOnlyTheChange(self):
 		SCREEN["text"] = "? Select features\n\u276f\u25c9 TypeScript\n \u25ef ESLint"
 		obj = makeTerminal()
@@ -618,6 +674,95 @@ class OverlayTest(Base):
 		obj.event_gainFocus()
 		core.runPending()
 		self.assertIn("Command finished after 60 seconds", spoken)
+
+
+class StatusTest(Base):
+	def startCommand(self, command="npm install"):
+		obj = makeTerminal("PS C:\\p> " + command)
+		obj.caret = len(obj.text)
+		obj.script_cliEnter(Gesture("kb:enter"))
+		SCREEN["text"] = "PS C:\\p> " + command
+		return obj
+
+	def test_runningWithoutOutput(self):
+		obj = self.startCommand()
+		obj._cliCommandStart -= 75
+		self.assertEqual(obj.cliStatusText(), "npm install running for 1 minutes 15 seconds, no output yet")
+
+	def test_runningWithOutputAndProgress(self):
+		obj = self.startCommand("ollama pull llama3")
+		obj._reportNewLines(["pulling manifest"])
+		obj._reportNewLines(
+			["pulling 6a0746a1ec1a:  45% \u2595\u2588\u2588\u2588  \u258f 2.1 GB/4.7 GB  25 MB/s  1m40s"]
+		)
+		obj._cliLastOutputTime -= 10
+		status = obj.cliStatusText()
+		self.assertTrue(
+			status.startswith(
+				"ollama pull llama3 running for 0 seconds, pulling 45 percent, last output 10 seconds ago"
+			),
+			status,
+		)
+		self.assertTrue(status.endswith("pulling manifest"), status)
+
+	def test_waitingForATypedAnswer(self):
+		obj = self.startCommand("npx create-next-app")
+		SCREEN["text"] = (
+			"PS C:\\p> npx create-next-app\nNeed to install the following packages:\ncreate-next-app\nOk to proceed? (y)"
+		)
+		self.assertIn("waiting for your answer: Ok to proceed? (y)", obj.cliStatusText())
+
+	def test_waitingForAChoiceAndReady(self):
+		obj = self.startCommand("npx create-next-app")
+		SCREEN["text"] = "? Pick a router\n\u276f App Router\n  Pages Router"
+		self.assertEqual(
+			obj.cliStatusText(),
+			"Waiting for your choice. Pick a router. App Router. Up and Down arrows to move, Enter to choose",
+		)
+		SCREEN["text"] = "PS C:\\p> npx create-next-app\ndone\nPS C:\\p> "
+		obj._reportNewLines(["PS C:\\p> "])
+		self.assertEqual(obj.cliStatusText(), "Ready for a command, last command: npx create-next-app")
+
+	def test_silentCommandIsAnnouncedPeriodically(self):
+		obj = self.startCommand()
+		api.getFocusObject = lambda: obj
+		obj._cliCommandStart -= 31
+		core.runPending()
+		self.assertTrue(spoken and spoken[-1].startswith("npm install running for 31 seconds"), spoken)
+		del spoken[:]
+		CONF["cliHelper"]["statusEverySeconds"] = 0
+		obj._cliLastStatusSpoken -= 100
+		obj._cliStartWatch()
+		core.runPending()
+		self.assertEqual(spoken, [])
+
+	def test_commandThatEndsSilentlyIsNoticedByTheWatch(self):
+		obj = self.startCommand("timeout 20")
+		api.getFocusObject = lambda: obj
+		obj._cliCommandStart -= 20
+		obj._cliLastStatusSpoken = obj._cliCommandStart + 19
+		SCREEN["text"] = "PS C:\\p> timeout 20\nPS C:\\p> "
+		obj._cliLastFinishCheck = 0
+		core.runPending()
+		self.assertIn("Command finished after 20 seconds", spoken)
+
+	def test_statusKeyWorksDirectlyAndInCliMode(self):
+		obj = self.startCommand()
+		api.getFocusObject = lambda: obj
+		plugin = cliHelper.GlobalPlugin()
+		self.assertEqual(plugin.getScript(Gesture("kb:nvda+alt+i")), plugin.script_status)
+		plugin.script_status(None)
+		self.assertTrue(spoken[-1].startswith("npm install running for"), spoken)
+		plugin.script_toggleMode(None)
+		self.assertEqual(plugin.getScript(Gesture("kb:i")), plugin.script_status)
+
+	def test_shortcutsAreLeftToOtherProgramsOutsideTerminals(self):
+		# In Word and Excel, NVDA+Alt+C reports a comment; the add-on must not take it there.
+		word = types.SimpleNamespace(windowClassName="_WwG", appModule=None)
+		api.getFocusObject = lambda: word
+		plugin = cliHelper.GlobalPlugin()
+		self.assertIsNone(plugin.getScript(Gesture("kb:nvda+alt+c")))
+		self.assertIsNone(plugin.getScript(Gesture("kb:nvda+alt+i")))
 
 
 class ProgressAndSoundTest(Base):

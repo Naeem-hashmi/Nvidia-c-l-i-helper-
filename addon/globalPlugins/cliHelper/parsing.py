@@ -69,6 +69,32 @@ TOGGLE_RE = re.compile(
 )
 
 
+_QUESTION_SYMBOLS = "?\u25c6\u25c7* "
+_HINT_TAIL_RE = re.compile(r"\s+[\u203a\u00bb>]\s+-\s+.*$")
+_HINT_PARENS_RE = re.compile(r"(?i)\s*\([^)]*(?:arrow|space|select|toggle|navigate|enter|return)[^)]*\)")
+#: The last line of the screen asks for typed input, such as "Ok to proceed? (y)" or "Continue? [Y/n]".
+WAITING_RE = re.compile(r"(?i)(?:\((?:y|n|y/n|yes/no)\)|\[(?:y/n|yes/no)\]|\?\s*$|:\s*$|\u203a\s*$)")
+
+
+def cleanQuestion(text):
+	"""A question without its symbols and key hints: "Pick a router", not "? Pick a router » - Use arrow-keys"."""
+	text = (text or "").lstrip(_QUESTION_SYMBOLS).strip()
+	text = _HINT_TAIL_RE.sub("", text)
+	text = _HINT_PARENS_RE.sub("", text)
+	return text.rstrip(" \u203a\u00bb\u2026").strip()
+
+
+def waitingQuestion(lines, promptRe):
+	"""The question on the last line if a program waits for a typed answer (y/n, a name...), else None."""
+	content = [line for line in lines if line.strip()]
+	if not content:
+		return None
+	last = content[-1].strip()
+	if promptRe.match(content[-1]) or not WAITING_RE.search(last):
+		return None
+	return last
+
+
 def compilePattern(pattern, fallback):
 	"""Compile a user supplied pattern, falling back to the default if it is invalid."""
 	try:
@@ -232,12 +258,23 @@ class Menu(object):
 		return self.items[self.focusIndex]
 
 	def signature(self):
-		"""Identifies a prompt independently of where focus is."""
-		return (self.kind, self.question, tuple(item.label for item in self.items))
+		"""Identifies a prompt independently of where focus is.
+
+		The question without its key hints is used, because libraries such as Inquirer remove
+		"(Use arrow keys)" after the first key press, and long lists scroll, changing the visible choices.
+		"""
+		question = cleanQuestion(self.question)
+		if question:
+			return (self.kind, question)
+		return (self.kind, tuple(item.label for item in self.items))
 
 	def state(self):
-		"""Changes whenever focus moves or a choice is checked."""
-		return (self.focusIndex, tuple(item.checked for item in self.items))
+		focused = self.focused
+		return (
+			self.focusIndex,
+			focused.label if focused is not None else None,
+			tuple(item.checked for item in self.items),
+		)
 
 	def __repr__(self):
 		return "Menu(%r, %r, %r, focus=%r)" % (self.kind, self.question, self.items, self.focusIndex)

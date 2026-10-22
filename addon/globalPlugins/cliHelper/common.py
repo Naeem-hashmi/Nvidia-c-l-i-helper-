@@ -5,8 +5,6 @@
 
 """Configuration and small helpers shared by the add-on's modules."""
 
-import re
-
 import addonHandler
 import config
 import ui
@@ -20,6 +18,10 @@ addonHandler.initTranslation()
 CONFIG_SECTION = "cliHelper"
 config.conf.spec[CONFIG_SECTION] = {
 	"interactivePrompts": "boolean(default=True)",
+	# When a prompt appears, also say which keys answer it.
+	"promptHints": "boolean(default=True)",
+	# While a command runs without output, say its status every this many seconds (0 = never).
+	"statusEverySeconds": "integer(min=0, max=600, default=30)",
 	"quietMode": "boolean(default=False)",
 	# Progress bars and spinners: speech, tones, both, silent, or raw (read every change, as NVDA does).
 	"progressMode": 'option("speech", "tones", "both", "silent", "raw", default="speech")',
@@ -87,16 +89,9 @@ def describeChoice(menu, item):
 	return ", ".join(parts)
 
 
-_HINT_TAIL_RE = re.compile(r"\s+[›»>]\s+-\s+.*$")
-_HINT_PARENS_RE = re.compile(r"(?i)\s*\([^)]*(?:arrow|space|select|toggle|navigate|enter|return)[^)]*\)")
-
-
 def plainQuestion(menu):
 	"""The question without its symbols and key hints: "Pick a router", not "? Pick a router » - Use arrow-keys"."""
-	text = menu.question.lstrip("?◆◇* ").strip()
-	text = _HINT_TAIL_RE.sub("", text)
-	text = _HINT_PARENS_RE.sub("", text)
-	return text.rstrip(" ›»…").strip()
+	return parsing.cleanQuestion(menu.question)
 
 
 def copyText(text, message):
@@ -166,3 +161,30 @@ def problemsAsText(problems):
 			where = problem.file + (":%d" % problem.line if problem.line else "") + ": "
 		out.append(where + problem.message)
 	return "\n".join(out)
+
+
+def duration(seconds):
+	"""Spoken duration: "45 seconds", "2 minutes 5 seconds", "1 hour 3 minutes"."""
+	seconds = int(round(seconds))
+	if seconds < 60:
+		# Translators: A duration in seconds.
+		return _("{seconds} seconds").format(seconds=seconds)
+	minutes, seconds = divmod(seconds, 60)
+	if minutes < 60:
+		# Translators: A duration in minutes and seconds.
+		return _("{minutes} minutes {seconds} seconds").format(minutes=minutes, seconds=seconds)
+	hours, minutes = divmod(minutes, 60)
+	# Translators: A duration in hours and minutes.
+	return _("{hours} hours {minutes} minutes").format(hours=hours, minutes=minutes)
+
+
+def answerHint(menu):
+	"""Which keys answer an interactive prompt."""
+	if menu.kind == parsing.Menu.TOGGLE:
+		# Translators: How to answer a yes/no prompt.
+		return _("Left and Right arrows to choose, or type y or n, then Enter")
+	if menu.kind == parsing.Menu.CHECKBOX:
+		# Translators: How to answer a list where several choices can be checked.
+		return _("Up and Down arrows to move, Space to check or uncheck, Enter when done")
+	# Translators: How to answer a list where one choice is picked.
+	return _("Up and Down arrows to move, Enter to choose")

@@ -56,6 +56,8 @@ addonHandler.initTranslation()
 
 #: Turns CLI mode on and off.
 MODE_GESTURE = "kb:NVDA+alt+c"
+#: Scripts with their own NVDA+Alt shortcut; outside terminals those keys are left to NVDA and other programs.
+DIRECT_SCRIPTS = ("script_toggleMode", "script_status")
 #: How many lines a search for a paragraph, prompt, error or text will scan.
 MAX_SCAN_LINES = 5000
 
@@ -121,6 +123,7 @@ MODE_GESTURES = {
 	"kb:q": "toggleQuietMode",
 	"kb:s": "openSettings",
 	"kb:u": "checkForUpdates",
+	"kb:i": "status",
 	"kb:h": "help",
 	"kb:f1": "help",
 	"kb:/": "help",
@@ -295,6 +298,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	def getScript(self, gesture):
 		found = super(GlobalPlugin, self).getScript(gesture)
+		if found is not None and not self._modeActive and found.__name__ in DIRECT_SCRIPTS:
+			# Outside terminals, leave these keys to NVDA and other programs:
+			# in Word and Excel, NVDA+Alt+C reports a comment.
+			focus = api.getFocusObject()
+			if not (isTerminal(focus) or isConsoleWindow(focus)):
+				return None
 		if not self._modeActive or found is not None or getattr(gesture, "isModifier", False):
 			return found
 		# NVDA's own commands, such as NVDA+T or the numpad review keys, keep working in CLI mode.
@@ -994,6 +1003,26 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			# Translators: Reported when quiet mode is turned off.
 			ui.message(_("Quiet mode off"))
 
+	@compat.speakOnDemand
+	@script(
+		# Translators: Description of a command in the Input Gestures dialog.
+		description=_(
+			"Says what the terminal is doing: the running command, how long it has run and its last output, "
+			"or that it waits for an answer, or is ready"
+		),
+		gesture="kb:NVDA+alt+i",
+	)
+	def script_status(self, gesture):
+		obj = self._terminal()
+		if not obj:
+			return
+		speech.cancelSpeech()
+		if isinstance(obj, CLITerminal):
+			ui.message(obj.cliStatusText())
+		else:
+			lines = terminal.getScreenLines(obj)
+			ui.message(lines[-1] if lines else _("blank"))
+
 	@script(
 		# Translators: Description of a command in the Input Gestures dialog.
 		description=_("Checks GitHub for a new version of CLI Helper"),
@@ -1081,6 +1110,7 @@ HELP_TEXT = _(
 	"<h2>Other</h2>"
 	"<ul>"
 	"<li>Q: quiet mode on or off (stop reading new output automatically)</li>"
+	"<li>I (or NVDA+Alt+I at any time): status of the running command</li>"
 	"<li>S: settings</li>"
 	"<li>U: check for a new version of CLI Helper</li>"
 	"<li>H, F1 or slash: this help</li>"

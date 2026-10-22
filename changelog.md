@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.0
+
+* New: status command. NVDA+Alt+I, or I in CLI mode, says what the terminal is doing: the running command, how long it has run, the progress and last output, or that it waits for your answer, or is ready for a command.
+* New: while a command runs without any output, its status is announced every 30 seconds, so you know it is still working. The interval can be changed or turned off in settings.
+* New: when a menu or question appears, CLI Helper says which keys answer it, for example "Left and Right arrows to choose, or type y or n, then Enter". This can be turned off in settings.
+* New: typing y or n in a yes/no question, or pressing Space in a checkbox list, announces the result.
+* Changed: moving through a menu says only the new choice. The question was repeated when a library removed its "(Use arrow keys)" hint after the first key, or when a long list scrolled.
+* Changed: menus are announced more briefly ("4 choices" instead of "list, 4 choices").
+* Fixed: NVDA+Alt+C took over NVDA's "report comment" command in Word and Excel. CLI Helper's shortcuts now act only in terminals.
+* Simpler, shorter readme.
+
 ## 1.3.0
 
 * Fixed: in selection lists (for example in create-next-app), Up and Down sometimes read only the new choice and sometimes the whole list. Prompt libraries erase and redraw the whole prompt on every key, while NVDA compares the screen on its own thread. So the add-on could see a screen that had already moved on, or was half drawn, and then let the redrawn lines be read. Now it remembers the choices of the prompt being answered, waits until the prompt is fully redrawn before speaking, and treats the prompt as finished only when Enter is pressed or it stays gone. A randomised test of 300 sessions with random timing now checks that raw choices are never read.
