@@ -218,6 +218,20 @@ class TestMenus(unittest.TestCase):
 		m = menu("? Select\n\u276f \u25c9 one\n  \u25cb two")
 		self.assertEqual((m.focused.label, m.focused.checked), ("one", True))
 
+	def test_startIndexCoversQuestionAndHints(self):
+		m = menu("PS C:\\> npx x\n? Pick\n\u276f A\n  B\n\u2191\u2193 navigate")
+		self.assertEqual(m.startIndex, 1)
+
+	def test_toggleOnALongScreenHasWholeScreenIndexes(self):
+		lines = ["output %d" % i for i in range(100)] + ["? Use TypeScript? \u00bb No / Yes"]
+		m = parsing.parseMenu(lines, PROMPT)
+		self.assertEqual(m.kind, parsing.Menu.TOGGLE)
+		self.assertEqual(m.items[0].lineIndex, 100)
+		self.assertEqual(m.startIndex, 100)
+		lines = ["output %d" % i for i in range(100)] + ["? Pick", "\u276f A", "  B"]
+		m = parsing.parseMenu(lines, PROMPT)
+		self.assertEqual((m.startIndex, m.items[0].lineIndex), (100, 101))
+
 	def test_finishedPromptIsNotAMenu(self):
 		self.assertIsNone(
 			menu(

@@ -22,13 +22,19 @@ addon_info = AddonInfo(
 	# Translators: Long description to be shown for this add-on on add-on information from add-on store
 	addon_description=_("""Makes Command Prompt, PowerShell, Windows Terminal, WSL and other consoles easier to use.
 Speaks interactive prompts (selection lists, checkboxes and yes/no toggles such as create-next-app),
-reads the last command's output, numbered lines from the bottom, and offers a review mode and a
-document-style reader with character, word, line and paragraph navigation. Press NVDA+Alt+C, then H for help."""),
+reads the last command's output, announces when long commands finish, and adds a
+CLI mode with word-processor style reading, selection and copying. Press NVDA+Alt+C, then H for help."""),
 	# version
-	addon_version="1.0.0",
+	addon_version="1.1.0",
 	# Brief changelog for this version
 	# Translators: what's new content for the add-on version to be shown in the add-on store
-	addon_changelog=_("""First release."""),
+	addon_changelog=_("""CLI mode replaces the one-key layer and review mode: NVDA+Alt+C turns it on and it stays on until Escape.
+New: select and copy by character, word, line or paragraph with Shift and the reading keys; Control+A, Control+C; copy word (W) and paragraph (Shift+C).
+New: moving to an error copies the error line (can be turned off).
+New: announcement when a long command finishes, also when you come back from another window.
+New: H, F1 or slash opens help; V opens all terminal text, Shift+V the last output; T reads the typed command.
+Fixed: when a selection list appeared, all its choices were read before the current one.
+Fixed: the keyboard shortcut tables in the add-on help page were not shown as tables."""),
 	# Author(s)
 	addon_author="Naeem Hashmi",
 	# URL for the add-on documentation support
@@ -81,7 +87,7 @@ baseLanguage: str = "en"
 # If you need to add support for markup such as tables, fill out the below list.
 # Extensions string must be of the form "markdown.extensions.extensionName"
 # e.g. "markdown.extensions.tables" to add tables.
-markdownExtensions: list[str] = []
+markdownExtensions: list[str] = ["markdown.extensions.tables"]
 
 # Custom braille translation tables
 # If your add-on includes custom braille tables (most will not), fill out this dictionary.

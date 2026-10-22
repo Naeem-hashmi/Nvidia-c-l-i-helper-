@@ -199,6 +199,9 @@ class Menu(object):
 		self.items = items
 		#: Index into items of the focused choice, or None if focus is only shown by colour.
 		self.focusIndex = focusIndex
+		#: Index of the first screen line belonging to the prompt (its question, or its first choice).
+		#: Everything from here to the bottom of the screen is part of the prompt, including hint lines.
+		self.startIndex = items[0].lineIndex if items else 0
 
 	@property
 	def focused(self):
@@ -284,15 +287,16 @@ def _isBoundary(line, promptRe):
 
 
 def _questionAbove(lines, index):
+	"""Return (questionText, lineIndex) of the question at or above index, or ("", None)."""
 	i = index
 	while i >= 0:
 		text = _stripFrame(lines[i]).strip()
 		if text and _isQuestionLine(lines[i]):
-			return text
+			return text, i
 		if not text and not lines[i].strip():
-			return ""
+			return "", None
 		i -= 1
-	return ""
+	return "", None
 
 
 def _parseToggle(lines, promptRe):
@@ -317,7 +321,10 @@ def _parseToggle(lines, promptRe):
 				labels.append(rest.strip())
 			if None not in states and states.count(True) == 1:
 				items = [MenuItem(labels[j], None, states[j], i) for j in range(2)]
-				return Menu(Menu.TOGGLE, _questionAbove(lines, i - 1), items, states.index(True))
+				question, questionIndex = _questionAbove(lines, i - 1)
+				menu = Menu(Menu.TOGGLE, question, items, states.index(True))
+				menu.startIndex = i if questionIndex is None else questionIndex
+				return menu
 		# prompts toggle: "? Would you like to use TypeScript? › No / Yes"
 		if _isQuestionLine(line):
 			m = TOGGLE_RE.match(text)
@@ -326,7 +333,9 @@ def _parseToggle(lines, promptRe):
 					MenuItem(m.group("a").strip(), None, False, i),
 					MenuItem(m.group("b").strip(), None, False, i),
 				]
-				return Menu(Menu.TOGGLE, m.group("question").strip(), items, None)
+				menu = Menu(Menu.TOGGLE, m.group("question").strip(), items, None)
+				menu.startIndex = i
+				return menu
 		break
 	return None
 
@@ -363,7 +372,7 @@ def parseMenu(lines, promptRe=None, maxLines=40):
 				anchor = i
 				break
 	if anchor is None:
-		return _parseToggle(screen, promptRe)
+		return _withOffset(_parseToggle(screen, promptRe), offset)
 	# Grow the block of choice lines around the anchor.
 	start = anchor
 	while start - 1 >= 0 and not _isBoundary(screen[start - 1], promptRe):
@@ -386,7 +395,7 @@ def parseMenu(lines, promptRe=None, maxLines=40):
 			continue
 		items.append(MenuItem(label, checked, hasPointer, i + offset))
 	if len(items) < 2:
-		return _parseToggle(screen, promptRe)
+		return _withOffset(_parseToggle(screen, promptRe), offset)
 	focusIndexes = [j for j, item in enumerate(items) if item.focused]
 	states = [item.checked for item in items if item.checked is not None]
 	# @clack/prompts select draws the focused choice as a filled radio and the rest as empty ones.
@@ -409,8 +418,19 @@ def parseMenu(lines, promptRe=None, maxLines=40):
 	if kind == Menu.SELECT:
 		for item in items:
 			item.checked = None
-	question = _questionAbove(screen, start - 1)
-	return Menu(kind, question, items, focusIndexes[0] if focusIndexes else None)
+	question, questionIndex = _questionAbove(screen, start - 1)
+	menu = Menu(kind, question, items, focusIndexes[0] if focusIndexes else None)
+	menu.startIndex = (start if questionIndex is None else questionIndex) + offset
+	return menu
+
+
+def _withOffset(menu, offset):
+	"""Convert line indexes of a menu found in the last part of the screen to whole-screen indexes."""
+	if menu is not None and offset:
+		for item in menu.items:
+			item.lineIndex += offset
+		menu.startIndex += offset
+	return menu
 
 
 def _allRadio(screen, items, offset):
