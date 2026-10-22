@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0
+
+* New: downloads and progress bars. Tools such as ollama, pip, npm, winget, docker and git redraw their progress many times a second, and NVDA used to read every changing number. Progress is now read as a percentage every 25 percent (configurable), as rising beeps, both, or not at all. Spinners are read once by their text. The final 100 percent is always spoken.
+* New: error summary. R in CLI mode reads how many errors and warnings the last command had, and the first error with its file and line; Shift+R copies all of them. The summary is also read when a long command finishes. How many errors, how long a message and whether to include locations are settings.
+* New: sounds for new output: a low buzz for errors, a middle tone for warnings, a rising chirp for success. Each can be turned off.
+* New: command history (Shift+H in CLI mode): every command in the terminal with its output, which can be copied or opened in the reader.
+* Fixed: a newly opened PowerShell or Command Prompt window was not recognised as a terminal until focus left and came back. CLI Helper now asks Windows which control really has focus. A short tone (or speech, or nothing, as set) confirms that CLI Helper is active when focus arrives in a terminal.
+* The settings panel is now organised in groups: Reading, Downloads and progress bars, Errors, Sounds, CLI mode and patterns.
+* The "beep on errors" setting is replaced by the new sound settings.
+
 ## 1.1.0
 
 * CLI mode replaces the one-key command layer and the separate review mode. NVDA+Alt+C turns it on, and it stays on until Escape, so reading, copying and finding work without pressing NVDA+Alt+C before every key.

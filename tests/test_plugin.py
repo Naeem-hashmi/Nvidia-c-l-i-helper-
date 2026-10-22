@@ -13,6 +13,7 @@ spoken = []
 beeps = []
 clipboard = []
 review = {"pos": None}
+queued = []
 
 
 def _module(name, **attrs):
@@ -216,9 +217,10 @@ def installStubs():
 		def debugWarning(self, *a, **k):
 			pass
 
-		warning = error = exception = debugWarning
+		warning = error = exception = debug = debugWarning
 
 	_module("logHandler", log=_Log())
+	_module("eventHandler", queueEvent=lambda name, obj, **kw: queued.append((name, obj)))
 
 	class NVDAObject(object):
 		def initOverlayClass(self):
@@ -312,7 +314,17 @@ class Base(unittest.TestCase):
 		CONF["cliHelper"].update(
 			interactivePrompts=True,
 			quietMode=False,
-			beepOnErrors=False,
+			progressMode="speech",
+			progressStep=25,
+			progressInterval=0,
+			summaryOnFinish=True,
+			summaryCount=1,
+			summaryMaxChars=150,
+			summaryLocation=True,
+			soundErrors=False,
+			soundWarnings=False,
+			soundSuccess=False,
+			terminalEntry="tone",
 			copyErrorLines=True,
 			finishedAfterSeconds=5,
 			unassignedKeysLeaveMode=False,
@@ -426,9 +438,9 @@ class OverlayTest(Base):
 		obj._reportNewLines(["hello"])
 		self.assertEqual(spoken, [])
 		CONF["cliHelper"]["quietMode"] = False
-		CONF["cliHelper"]["beepOnErrors"] = True
+		CONF["cliHelper"]["soundErrors"] = True
 		obj._reportNewLines(["npm ERR! missing script"])
-		self.assertEqual(beeps, [330])
+		self.assertEqual(beeps, [200])
 		self.assertEqual(spoken, ["npm ERR! missing script"])
 
 	def test_toggleWithoutColourInfoSaysSo(self):
@@ -450,7 +462,15 @@ class OverlayTest(Base):
 		SCREEN["text"] = "PS C:\\p> npm install\nnpm ERR! network\nPS C:\\p> "
 		obj._reportNewLines(["PS C:\\p> "])
 		core.runPending()
-		self.assertIn("Command finished with errors after 30 seconds", spoken)
+		self.assertTrue(
+			any(
+				m.startswith(
+					"Command finished with errors after 30 seconds. 1 errors, 0 warnings. Error 1: network"
+				)
+				for m in spoken
+			),
+			spoken,
+		)
 
 	def test_shortCommandIsNotAnnounced(self):
 		obj = makeTerminal("PS C:\\p> dir")
@@ -469,6 +489,98 @@ class OverlayTest(Base):
 		obj.event_gainFocus()
 		core.runPending()
 		self.assertIn("Command finished after 60 seconds", spoken)
+
+
+class ProgressAndSoundTest(Base):
+	BAR = (
+		"pulling 6a0746a1ec1a:  {0:3d}% \u2595\u2588\u2588\u2588      \u258f 2.1 GB/4.7 GB   25 MB/s   1m40s"
+	)
+
+	def test_ollamaDownloadIsReadAsAFewPercentages(self):
+		obj = makeTerminal()
+		obj._reportNewLines(["pulling manifest \u280b"])
+		obj._reportNewLines(["pulling manifest \u2819"])
+		for n in range(0, 101):
+			SCREEN["text"] = "pulling manifest\n" + self.BAR.format(n)
+			if n % 3 == 0:
+				# Sometimes NVDA reports the whole redrawn line...
+				obj._reportNewLines([self.BAR.format(n)])
+			else:
+				# ...and sometimes only the numbers that changed.
+				obj._reportNewLines(["%d" % n, "1m%02ds" % (n % 60)])
+		obj._reportNewLines(["verifying sha256 digest", "writing manifest", "success"])
+		# NVDA reports only some redraws in full, so the spoken values are the first ones seen
+		# at or after each 25 percent step. The end is always announced.
+		self.assertEqual(spoken[:2], ["pulling manifest", "pulling, 0 percent"])
+		percents = [int(m.split()[0]) for m in spoken[2:-3]]
+		self.assertEqual(len(percents), 4, spoken)
+		self.assertEqual([p // 25 for p in percents], [1, 2, 3, 4])
+		self.assertEqual(percents[-1], 100)
+		self.assertEqual(spoken[-3:], ["verifying sha256 digest", "writing manifest", "success"])
+
+	def test_rawModeReadsEverything(self):
+		CONF["cliHelper"]["progressMode"] = "raw"
+		obj = makeTerminal()
+		obj._reportNewLines([self.BAR.format(5), "46"])
+		self.assertEqual(spoken, [self.BAR.format(5), "46"])
+
+	def test_numbersAreNotProgressWithoutABar(self):
+		obj = makeTerminal()
+		obj._reportNewLines(["12345", "Coverage: 85%"])
+		self.assertEqual(spoken, ["12345", "Coverage: 85%"])
+
+	def test_tonesMode(self):
+		CONF["cliHelper"]["progressMode"] = "tones"
+		obj = makeTerminal()
+		obj._reportNewLines([self.BAR.format(0)])
+		self.assertEqual((spoken, beeps), ([], [110]))
+
+	def test_soundCuesOnePerBatch(self):
+		CONF["cliHelper"].update(soundErrors=True, soundWarnings=True, soundSuccess=True)
+		obj = makeTerminal()
+		obj._reportNewLines(["npm WARN deprecated x", "npm ERR! boom"])
+		self.assertEqual(beeps, [200])
+		obj._reportNewLines(["\u2713 Compiled successfully"])
+		core.runPending()
+		self.assertEqual(beeps, [200, 1000, 1300])
+
+
+class FocusTest(Base):
+	def test_missedTerminalFocusIsRecovered(self):
+		term = makeTerminal()
+		window = types.SimpleNamespace(windowClassName="ConsoleWindowClass")
+		api.getFocusObject = lambda: window
+		cliHelper.uiaFocusedTerminal = lambda: term
+		del queued[:]
+		plugin = cliHelper.GlobalPlugin()
+		plugin.event_gainFocus(window, lambda: None)
+		core.runPending()
+		self.assertIn(("gainFocus", term), queued)
+		# Commands work at once, even before NVDA processes the recovered focus.
+		self.assertIs(plugin._terminal(), term)
+
+	def test_noRecoveryOutsideConsoles(self):
+		other = types.SimpleNamespace(windowClassName="Chrome_WidgetWin_1", appModule=None)
+		api.getFocusObject = lambda: other
+		cliHelper.uiaFocusedTerminal = lambda: self.fail("must not look for a terminal")
+		del queued[:]
+		plugin = cliHelper.GlobalPlugin()
+		plugin.event_gainFocus(other, lambda: None)
+		core.runPending()
+		self.assertEqual(queued, [])
+
+	def test_entryToneOncePerArrival(self):
+		term = makeTerminal()
+		plugin = cliHelper.GlobalPlugin()
+		plugin.event_gainFocus(term, lambda: None)
+		core.runPending()
+		plugin.event_gainFocus(term, lambda: None)
+		core.runPending()
+		self.assertEqual(beeps, [1100, 1400])
+		CONF["cliHelper"]["terminalEntry"] = "speech"
+		plugin.event_gainFocus(types.SimpleNamespace(windowClassName="x", appModule=None), lambda: None)
+		plugin.event_gainFocus(term, lambda: None)
+		self.assertEqual(spoken[-1], "CLI Helper active")
 
 
 class ModeTest(Base):
@@ -568,6 +680,23 @@ class ModeTest(Base):
 		self.assertEqual(spoken[-1], "Error: boom")
 		self.run_key("kb:control+uparrow")
 		self.assertEqual(spoken[-1], "PS C:\\p> npm test")
+
+	def test_errorSummaryAndHistory(self):
+		import wx
+
+		self.run_key("kb:r")
+		self.assertEqual(spoken[-1], "1 errors, 0 warnings. Error 1: Error: boom")
+		self.run_key("kb:shift+r")
+		self.assertEqual(clipboard[-1], "Error: boom")
+		shown = []
+		wx.CallAfter = lambda fn, *a: shown.append(a)
+		try:
+			self.run_key("kb:shift+h")
+		finally:
+			wx.CallAfter = lambda fn, *a: fn(*a)
+		self.assertEqual(
+			shown, [([("npm test", ["first line", "second word here", "", "Error: boom", "last"], 1, 0)],)]
+		)
 
 	def test_outputAndLines(self):
 		self.run_key("kb:o")

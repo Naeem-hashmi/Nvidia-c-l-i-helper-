@@ -127,6 +127,28 @@ def lastOutput(lines, promptRe):
 	return commandFromLine(lines[start], promptRe), output
 
 
+def commandBlocks(lines, promptRe):
+	"""Split terminal text into the commands that were run, oldest first.
+
+	Returns a list of (command, outputLines). Prompts with nothing typed are left out, and so is
+	the prompt the shell is waiting at.
+	"""
+	prompts = promptIndexes(lines, promptRe)
+	blocks = []
+	for n, start in enumerate(prompts):
+		command = commandFromLine(lines[start], promptRe)
+		if not command:
+			continue
+		end = prompts[n + 1] if n + 1 < len(prompts) else len(lines)
+		output = lines[start + 1 : end]
+		while output and not output[0].strip():
+			output.pop(0)
+		while output and not output[-1].strip():
+			output.pop()
+		blocks.append((command, output))
+	return blocks
+
+
 def nthLastLine(lines, n, promptRe):
 	"""Return the nth (1 based) non-blank line counted from the bottom.
 

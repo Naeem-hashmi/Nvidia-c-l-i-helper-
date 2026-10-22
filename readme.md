@@ -2,7 +2,7 @@
 
 CLI Helper is an NVDA add-on for Command Prompt, PowerShell, Windows Terminal, WSL, Git Bash, PuTTY, mintty and every other console NVDA treats as a terminal. Its goal is to make the command line read like a document, and to make interactive installers such as `npx create-next-app`, `npm create vite` and `npm init` usable by speech and braille.
 
-* Version: 1.1.0
+* Version: 1.2.0
 * NVDA compatibility: 2019.3 to 2026.3 (written to run on NVDA's 32-bit Python 3.7 and 3.11 releases and the 64-bit Python 3.13 releases). So far it has been verified only off Windows; see "Testing status" below.
 * License: GPL v2
 
@@ -62,6 +62,8 @@ While you select, NVDA says the text followed by "selected", or "unselected" whe
 | T / Shift+T | Read / copy the command typed at the prompt |
 | E / Shift+E | Next / previous line with an error or warning. The line is also copied to the clipboard, which a short high click confirms (this can be turned off in settings) |
 | M | Read the interactive prompt on screen, with all its choices |
+| R / Shift+R | Read a summary of the last command's errors and warnings / copy them all, with file and line |
+| Shift+H | Command history: every command in this terminal with its output |
 | V | Open all terminal text in the reader window, at the last command |
 | Shift+V | Open only the last command's output in the reader window |
 | F or Control+F | Find text |
@@ -77,7 +79,47 @@ Character, word and line movement use NVDA's own review cursor commands, so spee
 
 ### Command finished notice
 
-When a command that ran for at least 5 seconds finishes (the shell prompt comes back), you hear two rising tones and "Command finished after 42 seconds". If its output contained errors, the tones fall and you hear "Command finished with errors". If you were in another window, for example your browser during a long `npm install`, you hear it as soon as you come back to the terminal. Change the number of seconds in settings, or set it to 0 to turn this off.
+When a command that ran for at least 5 seconds finishes (the shell prompt comes back), you hear two rising tones and "Command finished after 42 seconds". If its output contained errors, the tones fall, you hear "Command finished with errors", and then a short error summary (see below). If you were in another window, for example your browser during a long `npm install`, you hear it as soon as you come back to the terminal. Change the number of seconds in settings, or set it to 0 to turn this off.
+
+### Downloads and progress bars
+
+Tools such as `ollama pull`, `pip install`, `npm install`, `winget`, `docker pull` and `git clone` redraw their progress bar many times a second. NVDA on its own reads every changed piece ("46", "2.2 GB/4.7", "1m39s", ...), which is hard to follow. CLI Helper recognises progress bars, transfer amounts, speeds and spinners, keeps them out of the automatic reading, and says something useful instead. For example, `ollama pull llama3` sounds like:
+
+"pulling manifest. pulling, 0 percent. 26 percent. 51 percent. 75 percent. 100 percent. verifying sha256 digest. writing manifest. success."
+
+Settings (Downloads and progress bars):
+
+* **Progress bars and spinners**: speak the percentage at each step (default), beep with a pitch that rises as it progresses (like NVDA's own progress bar beeps), both, silent, or read every change as NVDA does without the add-on.
+* **Speak progress every this many percent**: 25 by default (5 to 50).
+* **Speak progress at most every this many seconds**: 3 by default. The final 100 percent is always spoken.
+
+A spinner ("pulling manifest ⠋") is spoken once by its text, not every frame. A line is treated as progress only when it shows a bar, a transfer amount ("2.1 GB/4.7 GB"), a speed ("25 MB/s") or a spinner. A result such as "Coverage: 85%" or a line of numbers printed by your command is still read normally.
+
+### Error summary: how it decides what to read
+
+Error output is often long and repetitive. The summary picks out what matters:
+
+1. **Problems are found** by the error pattern (error, failed, exception, ERR!, cannot, not recognized, denied, panic, warning...). Lines that report success, such as "0 errors" or "found 0 vulnerabilities", are ignored.
+2. **Repeated lines become one problem.** A block of "npm ERR!" lines is one error, and the line that explains it ("404 Not Found - GET ...") is used rather than "code E404". A Python traceback is one error: its last line ("ValueError: bad value"), at the place it was raised.
+3. **Errors are separated from warnings.** A line that only mentions warn, warning or deprecated is a warning.
+4. **The location is found** on the problem line or the two lines around it, in the forms used by TypeScript, Next.js, ESLint, Rust, Go, Python and others ("./src/app/page.tsx:12:5", "--> src/main.rs:4:5"). Only the file name is spoken, not the whole path.
+5. **Errors come first**, because the first error usually causes the others.
+
+You hear for example: "2 errors, 1 warnings. Error 1: Type 'string' is not assignable to type 'number', page.tsx line 12".
+
+Settings (Errors): read the summary when a long command finishes (on), how many errors to read in detail (1), the longest message read in characters (150; longer ones are cut at a word), and whether to say the file and line (on). R reads the summary at any time, and Shift+R copies every problem with its full path and line, ready to paste into an issue or a chat.
+
+### Sounds for new output
+
+Short sounds tell you how output is going without listening to all of it: a low buzz for an error line, a middle tone for a warning, and a rising chirp for success ("done", "passed", "compiled successfully", "found 0 vulnerabilities"). Only one sound plays per burst of output, the most important one. Each sound can be turned off in settings.
+
+### Command history
+
+In CLI mode, Shift+H opens a list of every command in this terminal, newest last, with the number of output lines and of errors and warnings, for example "npm run build, 42 lines, 2 errors". The output of the selected command appears below the list. Buttons copy the command or its output, or open the output in the reader window (Enter on the list does the same).
+
+### Terminal detection
+
+When a new PowerShell or Command Prompt window opens, NVDA sometimes gets focus for the window before its text area is ready, and then treats it as an ordinary window until you switch away and back. CLI Helper notices this and asks Windows which control really has the keyboard focus, so the terminal works at once. When focus arrives in a terminal you hear a short rising tone, so you know CLI Helper is active. In settings, this can instead say "CLI Helper active", or do nothing.
 
 ### Reader window
 
@@ -86,20 +128,16 @@ V (whole terminal) and Shift+V (last output) open the text in a read-only, multi
 ### Other conveniences
 
 * Quiet mode stops NVDA from reading new output automatically, which helps during very long installs. Turn it off to hear output again.
-* Optional beep when new output contains an error or warning (off by default).
 
 ## Settings
 
-NVDA menu > Preferences > Settings > CLI Helper:
+NVDA menu > Preferences > Settings > CLI Helper. The settings are in groups:
 
-* Support interactive prompts (on by default).
-* Quiet mode.
-* Beep when new output contains an error or warning.
-* Copy the error line to the clipboard when moving to an error (on by default).
-* In CLI mode, keys without a command leave the mode and are typed (off by default).
-* Announce when a command finishes if it ran at least this many seconds (5 by default; 0 turns it off).
-* Shell prompt pattern: a regular expression for your prompt, if it is unusual. Leave it empty to use the default, which recognises PowerShell (`PS C:\>`), Command Prompt (`C:\>`), bash, zsh and WSL (`user@host:~$`), Git Bash (`$ `) and the Python REPL (`>>> `).
-* Error pattern: a regular expression for lines that count as errors.
+* **Reading**: quiet mode; support interactive prompts; what happens when focus moves to a terminal (tone, speech or nothing).
+* **Downloads and progress bars**: how progress is reported; every how many percent; at most every how many seconds.
+* **Errors**: read an error summary when a long command finishes; number of errors read in detail; longest message; file and line; copy the error line when moving to an error; announce when a command finishes after this many seconds.
+* **Sounds for new output**: errors, warnings, success, each on or off.
+* **CLI mode and patterns**: whether keys without a command leave CLI mode; the shell prompt pattern, a regular expression for your prompt if it is unusual (the default recognises PowerShell `PS C:\>`, Command Prompt `C:\>`, bash, zsh and WSL `user@host:~$`, Git Bash `$ ` and the Python REPL `>>> `); the error pattern.
 
 ## Tips
 
@@ -126,4 +164,4 @@ py -3.13 -m pip install scons==4.10.1 Markdown==3.10
 py -3.13 -m SCons
 ```
 
-This produces `cliHelper-1.1.0.nvda-addon`. Run the tests with `python -m unittest discover tests`. The research behind the add-on, including sources, NVDA compatibility rules and a comparison with existing add-ons, is in `docs/research.md`.
+This produces `cliHelper-1.2.0.nvda-addon`. Run the tests with `python -m unittest discover tests`. The research behind the add-on, including sources, NVDA compatibility rules and a comparison with existing add-ons, is in `docs/research.md`.

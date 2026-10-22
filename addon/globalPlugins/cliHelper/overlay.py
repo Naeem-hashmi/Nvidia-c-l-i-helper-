@@ -18,8 +18,10 @@ from NVDAObjects import NVDAObject
 from scriptHandler import script
 
 from . import parsing
+from . import problems
+from . import progress
 from . import terminal
-from .common import FOCUS_UNKNOWN_MESSAGE, conf, describeChoice, errorRe, plainQuestion, promptRe
+from .common import FOCUS_UNKNOWN_MESSAGE, conf, describeChoice, errorRe, plainQuestion, promptRe, summaryText
 
 addonHandler.initTranslation()
 
@@ -28,6 +30,23 @@ POLL_INTERVAL = 40
 POLL_ATTEMPTS = 12
 #: While a command runs, how often (seconds) at most to look at the screen for the returning shell prompt.
 FINISH_CHECK_INTERVAL = 1.0
+#: After seeing a progress bar or spinner, numbers and fragments count as progress for this many seconds.
+PROGRESS_LINGER = 3.0
+#: While progress is redrawn in fragments, how often (seconds) at most to read the screen for the percentage.
+PROGRESS_SCAN_INTERVAL = 0.5
+#: The same kind of sound is played at most this often (seconds).
+SOUND_INTERVAL = 0.4
+
+
+def playSound(kind):
+	"""Short sounds for new output: a low buzz for errors, a middle tone for warnings, a rising chirp for success."""
+	if kind == "error":
+		tones.beep(200, 100)
+	elif kind == "warning":
+		tones.beep(400, 60)
+	elif kind == "success":
+		tones.beep(1000, 40)
+		core.callLater(50, tones.beep, 1300, 40)
 
 
 def _hasPromptMarker(line):
@@ -60,6 +79,15 @@ class CLITerminal(NVDAObject):
 	_cliCommandStart = None
 	_cliCommandSawError = False
 	_cliLastFinishCheck = 0.0
+	_cliProgressUntil = 0.0
+	_cliLastProgressScan = 0.0
+	_cliProgressTracker = None
+	_cliProgressKey = None
+	_cliSpinnerLabel = None
+	#: Progress was reported only in fragments since the screen was last read for it.
+	_cliProgressUnread = False
+	_cliSpinnerSpoken = 0.0
+	_cliLastSounds = None
 
 	def initOverlayClass(self):
 		self._cliScreenCache = (0.0, None)
@@ -284,11 +312,22 @@ class CLITerminal(NVDAObject):
 		content = [line for line in lines if line.strip()]
 		return bool(content) and parsing.commandFromLine(content[-1], promptRe()) == ""
 
+	def cliLastProblems(self):
+		"""The errors and warnings in the output of the last command."""
+		command, output = parsing.lastOutput(terminal.getBufferLines(self), promptRe())
+		return problems.summarize(output, errorRe())
+
 	def cliAnnounceFinished(self, seconds):
 		threshold = conf()["finishedAfterSeconds"]
 		if not threshold or seconds < threshold:
 			return
-		if self._cliCommandSawError:
+		try:
+			found = self.cliLastProblems()
+		except Exception:
+			log.debugWarning("CLI Helper: could not analyse output", exc_info=True)
+			found = []
+		hasErrors = any(p.kind == problems.Problem.ERROR for p in found)
+		if hasErrors:
 			tones.beep(440, 80)
 			core.callLater(100, tones.beep, 330, 120)
 			# Translators: Announced when a long command finishes and its output contained errors.
@@ -298,7 +337,10 @@ class CLITerminal(NVDAObject):
 			core.callLater(100, tones.beep, 880, 120)
 			# Translators: Announced when a long command finishes.
 			message = _("Command finished after {seconds} seconds")
-		ui.message(message.format(seconds=int(round(seconds))))
+		message = message.format(seconds=int(round(seconds)))
+		if found and conf()["summaryOnFinish"]:
+			message += ". " + summaryText(found)
+		ui.message(message)
 
 	def event_gainFocus(self):
 		super(CLITerminal, self).event_gainFocus()
@@ -316,9 +358,120 @@ class CLITerminal(NVDAObject):
 		if conf()["quietMode"]:
 			return []
 		lines = self._cliFilterMenuText(lines)
-		if lines and conf()["beepOnErrors"] and any(errorRe().search(line) for line in lines):
-			tones.beep(330, 60)
+		lines = self._cliFilterProgress(lines)
+		if lines:
+			self._cliPlaySounds(lines)
 		return lines
+
+	# Progress bars and spinners
+
+	def _cliTracker(self, mode):
+		key = (mode, conf()["progressStep"], conf()["progressInterval"])
+		if self._cliProgressTracker is None or self._cliProgressKey != key:
+			self._cliProgressTracker = progress.ProgressTracker(mode, key[1], key[2])
+			self._cliProgressKey = key
+		return self._cliProgressTracker
+
+	def _cliRunProgressActions(self, actions):
+		for action in actions:
+			if action[0] == "tone":
+				tones.beep(progress.toneFrequency(action[1]), 40)
+			elif action[0] == "speak":
+				name, percent = action[1], action[2]
+				# Translators: Spoken progress of a download or install, e.g. "45 percent".
+				text = _("{percent} percent").format(percent=percent)
+				speech.speakText(name + ", " + text if name else text)
+
+	def _cliFilterProgress(self, lines):
+		"""Replace redrawn progress bars and spinners with occasional percentages or tones.
+
+		A line counts as progress when it has a bar, a transfer ratio, a speed or a spinner. For a few seconds
+		after such a line, plain numbers and fragments such as "46" or "1m39s" count as progress too,
+		because NVDA reports only the changed parts of a redrawn bar.
+		"""
+		mode = conf()["progressMode"]
+		if mode == "raw":
+			return lines
+		now = time.time()
+		tracker = self._cliTracker(mode)
+		kept = []
+		fed = False
+		fragmentSeen = False
+		for line in lines:
+			strong = progress.isStrongProgressLine(line)
+			active = now < self._cliProgressUntil
+			if not strong and not (
+				active and (progress.isProgressLine(line) or progress.isProgressFragment(line))
+			):
+				kept.append(line)
+				continue
+			self._cliProgressUntil = now + PROGRESS_LINGER
+			percent = progress.extractPercent(line) if (strong or progress.isProgressLine(line)) else None
+			if percent is not None:
+				self._cliRunProgressActions(tracker.feed(progress.label(line), percent, now))
+				fed = True
+			elif progress.isSpinnerLine(line):
+				self._cliSpinner(line, mode, now)
+			else:
+				fragmentSeen = True
+		if fed:
+			self._cliProgressUnread = False
+		elif fragmentSeen:
+			self._cliProgressUnread = True
+		# Read the whole bar from the screen when only parts of it were reported: now and then while it
+		# runs, and always once when ordinary output follows, so the final "100 percent" is never missed.
+		finished = bool(kept) and self._cliProgressUnread
+		if self._cliProgressUnread and (
+			finished or now - self._cliLastProgressScan >= PROGRESS_SCAN_INTERVAL
+		):
+			self._cliLastProgressScan = now
+			self._cliProgressUnread = False
+			try:
+				screen = terminal.getScreenLines(self)
+			except Exception:
+				screen = []
+			for line in reversed(screen[-15:]):
+				percent = progress.extractPercent(line) if progress.isProgressLine(line) else None
+				if percent is not None:
+					self._cliRunProgressActions(tracker.feed(progress.label(line), percent, now))
+					break
+		return kept
+
+	def _cliSpinner(self, line, mode, now):
+		"""Say what a spinner is waiting for ("pulling manifest") when it changes, not every frame."""
+		if mode not in ("speech", "both"):
+			return
+		name = line.strip().strip(progress.SPINNER_CHARS).strip()
+		if not name or name == self._cliSpinnerLabel:
+			return
+		if now - self._cliSpinnerSpoken < conf()["progressInterval"]:
+			return
+		self._cliSpinnerLabel = name
+		self._cliSpinnerSpoken = now
+		speech.speakText(name)
+
+	# Sounds
+
+	def _cliPlaySounds(self, lines):
+		enabled = {
+			"error": conf()["soundErrors"],
+			"warning": conf()["soundWarnings"],
+			"success": conf()["soundSuccess"],
+		}
+		if not any(enabled.values()):
+			return
+		pattern = errorRe()
+		kinds = set(problems.classify(line, pattern) for line in lines)
+		now = time.time()
+		if self._cliLastSounds is None:
+			self._cliLastSounds = {}
+		for kind in ("error", "warning", "success"):
+			if kind in kinds and enabled[kind]:
+				if now - self._cliLastSounds.get(kind, 0.0) >= SOUND_INTERVAL:
+					self._cliLastSounds[kind] = now
+					playSound(kind)
+				# One sound per batch: the most important kind.
+				return
 
 	def _reportNewLines(self, lines):
 		# NVDA 2020.4 and later report each batch of new text here.

@@ -14,6 +14,7 @@ like a word processor, and run the add-on's commands. Keys are listed in MODE_GE
 import addonHandler
 import api
 import core
+import eventHandler
 import globalCommands
 import globalPluginHandler
 import gui
@@ -28,7 +29,9 @@ from NVDAObjects.behaviors import Terminal
 from scriptHandler import script
 
 from . import compat
+from . import history
 from . import parsing
+from . import problems
 from . import reader
 from . import terminal
 from .common import (
@@ -40,7 +43,9 @@ from .common import (
 	errorRe,
 	isRoleTerminal,
 	plainQuestion,
+	problemsAsText,
 	promptRe,
+	summaryText,
 )
 from .overlay import CLITerminal
 from .settings import SettingsPanel
@@ -98,6 +103,9 @@ MODE_GESTURES = {
 	"kb:t": "readCommand",
 	"kb:shift+t": "copyCommand",
 	"kb:m": "readMenu",
+	"kb:r": "readErrorSummary",
+	"kb:shift+r": "copyErrors",
+	"kb:shift+h": "commandHistory",
 	"kb:e": "nextError",
 	"kb:shift+e": "previousError",
 	"kb:v": "viewBuffer",
@@ -126,6 +134,57 @@ def isTerminal(obj):
 	if obj is None:
 		return False
 	return isinstance(obj, (Terminal, CLITerminal)) or isRoleTerminal(obj)
+
+
+#: Window classes of console hosts: Windows Console (conhost), Windows Terminal, and the pseudo console.
+CONSOLE_WINDOW_CLASSES = ("ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "PseudoConsoleWindow")
+CONSOLE_APPS = (
+	"cmd",
+	"powershell",
+	"pwsh",
+	"windowsterminal",
+	"conhost",
+	"openconsole",
+	"wsl",
+	"wslhost",
+	"bash",
+)
+
+
+def isConsoleWindow(obj):
+	"""Whether obj belongs to a console host, even if it is not the terminal text itself."""
+	try:
+		if obj.windowClassName in CONSOLE_WINDOW_CLASSES:
+			return True
+	except Exception:
+		pass
+	try:
+		return obj.appModule.appName.lower() in CONSOLE_APPS
+	except Exception:
+		return False
+
+
+def uiaFocusedTerminal():
+	"""Ask UI Automation which control really has the keyboard focus, and return it if it is a terminal.
+
+	When PowerShell or Command Prompt opens, NVDA sometimes receives focus for the console window
+	before its text area exists, and then no focus event for the text area. NVDA would treat the
+	window as an ordinary window until focus moved away and back. This finds the real terminal.
+	"""
+	try:
+		import UIAHandler
+		from NVDAObjects.UIA import UIA
+
+		handler = UIAHandler.handler
+		if handler is None:
+			return None
+		element = handler.clientObject.GetFocusedElement()
+		element = element.buildUpdatedCache(handler.baseCacheRequest)
+		obj = UIA(UIAElement=element)
+	except Exception:
+		log.debugWarning("CLI Helper: no UI Automation focus", exc_info=True)
+		return None
+	return obj if isTerminal(obj) else None
 
 
 def _lineText(info):
@@ -162,6 +221,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	def __init__(self):
 		super(GlobalPlugin, self).__init__()
 		self._modeActive = False
+		#: Whether focus is in a terminal, to give the entry cue only when arriving.
+		self._inTerminal = False
 		#: CLI mode was paused for one of the add-on's dialogs and comes back with the terminal.
 		self._modeSuspended = False
 		self._lastSearch = ""
@@ -189,10 +250,39 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 				self._modeSuspended = False
 				self._bindMode()
 				tones.beep(880, 30)
-		elif self._modeActive:
-			# Leaving the terminal (for example Alt+Tab) ends CLI mode.
-			self._setMode(False, announce=False)
+			elif not self._inTerminal:
+				self._announceTerminal()
+			self._inTerminal = True
+		else:
+			self._inTerminal = False
+			if self._modeActive:
+				# Leaving the terminal (for example Alt+Tab) ends CLI mode.
+				self._setMode(False, announce=False)
+			if isConsoleWindow(obj):
+				# The console may have focus without NVDA knowing its terminal yet; check once it has settled.
+				for delay in (300, 1200):
+					core.callLater(delay, self._recoverTerminalFocus)
 		nextHandler()
+
+	def _announceTerminal(self):
+		"""Let the user know CLI Helper is working in this terminal, as set in settings."""
+		entry = conf()["terminalEntry"]
+		if entry == "tone":
+			tones.beep(1100, 25)
+			core.callLater(40, tones.beep, 1400, 25)
+		elif entry == "speech":
+			# Translators: Spoken when focus moves to a terminal, if set in settings.
+			ui.message(_("CLI Helper active"))
+
+	def _recoverTerminalFocus(self):
+		focus = api.getFocusObject()
+		if isTerminal(focus) or not isConsoleWindow(focus):
+			# Already fine, or the user has moved on.
+			return
+		found = uiaFocusedTerminal()
+		if found is not None:
+			log.debug("CLI Helper: NVDA missed the focus of a terminal; sending it now")
+			eventHandler.queueEvent("gainFocus", found)
 
 	# CLI mode
 
@@ -289,6 +379,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		focus = api.getFocusObject()
 		if isTerminal(focus):
 			return focus
+		if isConsoleWindow(focus):
+			found = uiaFocusedTerminal()
+			if found is not None:
+				# Tell NVDA about the terminal it missed, then carry on with it.
+				eventHandler.queueEvent("gainFocus", found)
+				return found
 		# Translators: Reported when a CLI Helper command is used outside a terminal.
 		ui.message(_("Not in a terminal"))
 		return None
@@ -786,6 +882,55 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._suspendForDialog()
 		wx.CallAfter(reader.show, title, "\n".join(output), 0)
 
+	def _lastProblems(self, obj):
+		command, output = self._lastOutput(obj)
+		return problems.summarize(output, errorRe())
+
+	@compat.speakOnDemand
+	@script(
+		# Translators: Description of a command in the Input Gestures dialog.
+		description=_("Reads a summary of the errors and warnings of the last command"),
+	)
+	def script_readErrorSummary(self, gesture):
+		obj = self._terminal()
+		if not obj:
+			return
+		speech.cancelSpeech()
+		ui.message(summaryText(self._lastProblems(obj)))
+
+	@script(
+		# Translators: Description of a command in the Input Gestures dialog.
+		description=_("Copies all errors and warnings of the last command, with their locations"),
+	)
+	def script_copyErrors(self, gesture):
+		obj = self._terminal()
+		if not obj:
+			return
+		found = self._lastProblems(obj)
+		# Translators: Reported after copying the errors of the last command.
+		copyText(problemsAsText(found), _("{count} problems copied").format(count=len(found)))
+
+	@script(
+		# Translators: Description of a command in the Input Gestures dialog.
+		description=_("Opens the list of commands run in this terminal, with their output"),
+	)
+	def script_commandHistory(self, gesture):
+		obj = self._terminal()
+		if not obj:
+			return
+		pattern = errorRe()
+		entries = []
+		for command, output in parsing.commandBlocks(terminal.getBufferLines(obj), promptRe()):
+			found = problems.summarize(output, pattern)
+			errors = len([p for p in found if p.kind == problems.Problem.ERROR])
+			entries.append((command, output, errors, len(found) - errors))
+		if not entries:
+			# Translators: Reported when no commands are found in the terminal.
+			ui.message(_("No commands found"))
+			return
+		self._suspendForDialog()
+		wx.CallAfter(history.show, entries)
+
 	# Finding text
 
 	@script(
@@ -907,6 +1052,8 @@ HELP_TEXT = _(
 	"<li>E or Shift+E: next or previous error or warning (also copied to the clipboard; "
 	"this can be turned off in settings)</li>"
 	"<li>M: read the interactive prompt on screen with all its choices</li>"
+	"<li>R: read a summary of the last command's errors and warnings. Shift+R: copy them all</li>"
+	"<li>Shift+H: command history, a list of every command with its output</li>"
 	"<li>V: open all terminal text in a reader window. Shift+V: open only the last output</li>"
 	"<li>F or Control+F: find. N or F3: next match. Shift+N or Shift+F3: previous match</li>"
 	"</ul>"

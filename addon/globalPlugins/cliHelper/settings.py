@@ -13,17 +13,25 @@ from .common import conf
 
 addonHandler.initTranslation()
 
-BOOLEAN_OPTIONS = (
-	# Translators: A setting of the add-on.
-	("interactivePrompts", _("Support &interactive prompts (selection lists, checkboxes, yes/no toggles)")),
-	# Translators: A setting of the add-on.
-	("quietMode", _("&Quiet mode: do not read new output automatically")),
-	# Translators: A setting of the add-on.
-	("beepOnErrors", _("&Beep when new output contains an error or warning")),
-	# Translators: A setting of the add-on.
-	("copyErrorLines", _("&Copy the error line to the clipboard when moving to an error")),
-	# Translators: A setting of the add-on.
-	("unassignedKeysLeaveMode", _("In CLI mode, keys without a command &leave the mode and are typed")),
+PROGRESS_MODES = (
+	# Translators: A choice for how progress bars are reported.
+	("speech", _("Speak the percentage at each step")),
+	# Translators: A choice for how progress bars are reported.
+	("tones", _("Beep, higher as it progresses")),
+	# Translators: A choice for how progress bars are reported.
+	("both", _("Speak and beep")),
+	# Translators: A choice for how progress bars are reported.
+	("silent", _("Silent")),
+	# Translators: A choice for how progress bars are reported.
+	("raw", _("Read every change, as NVDA does without the add-on")),
+)
+ENTRY_MODES = (
+	# Translators: A choice for what happens when focus moves to a terminal.
+	("off", _("Nothing")),
+	# Translators: A choice for what happens when focus moves to a terminal.
+	("tone", _("Short rising tone")),
+	# Translators: A choice for what happens when focus moves to a terminal.
+	("speech", _('Say "CLI Helper active"')),
 )
 
 
@@ -31,37 +39,130 @@ class SettingsPanel(settingsDialogs.SettingsPanel):
 	# Translators: Title of the add-on's settings panel.
 	title = _("CLI Helper")
 
+	def _group(self, helper, label):
+		box = wx.StaticBoxSizer(wx.VERTICAL, self, label=label)
+		helper.addItem(box)
+		return guiHelper.BoxSizerHelper(self, sizer=box)
+
+	def _check(self, group, key, label):
+		box = group.addItem(wx.CheckBox(self, label=label))
+		box.SetValue(conf()[key])
+		self._checks[key] = box
+
+	def _spin(self, group, key, label, minimum, maximum):
+		control = group.addLabeledControl(label, wx.SpinCtrl, min=minimum, max=maximum, initial=conf()[key])
+		self._spins[key] = control
+
+	def _choice(self, group, key, label, options):
+		control = group.addLabeledControl(label, wx.Choice, choices=[text for value, text in options])
+		values = [value for value, text in options]
+		control.SetSelection(values.index(conf()[key]) if conf()[key] in values else 0)
+		self._choices[key] = (control, values)
+
 	def makeSettings(self, settingsSizer):
 		helper = guiHelper.BoxSizerHelper(self, sizer=settingsSizer)
-		self._checkBoxes = {}
-		for key, label in BOOLEAN_OPTIONS:
-			box = helper.addItem(wx.CheckBox(self, label=label))
-			box.SetValue(conf()[key])
-			self._checkBoxes[key] = box
-		self.finishedAfter = helper.addLabeledControl(
+		self._checks = {}
+		self._spins = {}
+		self._choices = {}
+
+		# Translators: A group of settings.
+		group = self._group(helper, _("Reading"))
+		# Translators: A setting of the add-on.
+		self._check(group, "quietMode", _("&Quiet mode: do not read new output automatically"))
+		self._check(
+			group,
+			"interactivePrompts",
 			# Translators: A setting of the add-on.
-			_("Announce when a command &finishes if it ran at least this many seconds (0 = never):"),
-			wx.SpinCtrl,
-			min=0,
-			max=3600,
-			initial=conf()["finishedAfterSeconds"],
+			_("Support &interactive prompts (selection lists, checkboxes, yes/no toggles)"),
 		)
-		self.promptPattern = helper.addLabeledControl(
+		self._choice(
+			group,
+			"terminalEntry",
 			# Translators: A setting of the add-on.
-			_("Shell &prompt pattern (regular expression, empty for the default):"),
+			_("&When focus moves to a terminal:"),
+			ENTRY_MODES,
+		)
+
+		# Translators: A group of settings.
+		group = self._group(helper, _("Downloads and progress bars"))
+		# Translators: A setting of the add-on.
+		self._choice(group, "progressMode", _("&Progress bars and spinners:"), PROGRESS_MODES)
+		# Translators: A setting of the add-on.
+		self._spin(group, "progressStep", _("&Speak progress every this many percent:"), 5, 50)
+		self._spin(
+			group,
+			"progressInterval",
+			# Translators: A setting of the add-on.
+			_("Speak progress at most every this many secon&ds:"),
+			0,
+			60,
+		)
+
+		# Translators: A group of settings.
+		group = self._group(helper, _("Errors"))
+		self._check(
+			group,
+			"summaryOnFinish",
+			# Translators: A setting of the add-on.
+			_("Read an error su&mmary when a long command finishes"),
+		)
+		# Translators: A setting of the add-on.
+		self._spin(group, "summaryCount", _("&Number of errors read in detail:"), 1, 10)
+		# Translators: A setting of the add-on.
+		self._spin(group, "summaryMaxChars", _("&Longest error message read, in characters:"), 40, 1000)
+		# Translators: A setting of the add-on.
+		self._check(group, "summaryLocation", _("R&eport the file and line of each error"))
+		self._check(
+			group,
+			"copyErrorLines",
+			# Translators: A setting of the add-on.
+			_("&Copy the error line to the clipboard when moving to an error"),
+		)
+		self._spin(
+			group,
+			"finishedAfterSeconds",
+			# Translators: A setting of the add-on.
+			_("&Announce when a command finishes if it ran at least this many seconds (0 = never):"),
+			0,
+			3600,
+		)
+
+		# Translators: A group of settings.
+		group = self._group(helper, _("Sounds for new output"))
+		# Translators: A setting of the add-on.
+		self._check(group, "soundErrors", _("Low &buzz for errors"))
+		# Translators: A setting of the add-on.
+		self._check(group, "soundWarnings", _("Middle &tone for warnings"))
+		# Translators: A setting of the add-on.
+		self._check(group, "soundSuccess", _("Rising c&hirp for success (done, passed, compiled)"))
+
+		# Translators: A group of settings.
+		group = self._group(helper, _("CLI mode and patterns"))
+		self._check(
+			group,
+			"unassignedKeysLeaveMode",
+			# Translators: A setting of the add-on.
+			_("In CLI mode, keys without a command lea&ve the mode and are typed"),
+		)
+		self.promptPattern = group.addLabeledControl(
+			# Translators: A setting of the add-on.
+			_("Shell p&rompt pattern (regular expression, empty for the default):"),
 			wx.TextCtrl,
 		)
 		self.promptPattern.SetValue(conf()["promptPattern"])
-		self.errorPattern = helper.addLabeledControl(
+		self.errorPattern = group.addLabeledControl(
 			# Translators: A setting of the add-on.
-			_("&Error pattern (regular expression, empty for the default):"),
+			_("Err&or pattern (regular expression, empty for the default):"),
 			wx.TextCtrl,
 		)
 		self.errorPattern.SetValue(conf()["errorPattern"])
 
 	def onSave(self):
-		for key, box in self._checkBoxes.items():
+		for key, box in self._checks.items():
 			conf()[key] = box.GetValue()
-		conf()["finishedAfterSeconds"] = self.finishedAfter.GetValue()
+		for key, control in self._spins.items():
+			conf()[key] = control.GetValue()
+		for key, (control, values) in self._choices.items():
+			conf()[key] = values[max(0, control.GetSelection())]
 		conf()["promptPattern"] = self.promptPattern.GetValue()
 		conf()["errorPattern"] = self.errorPattern.GetValue()

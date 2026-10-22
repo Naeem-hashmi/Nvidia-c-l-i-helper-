@@ -25,16 +25,15 @@ Speaks interactive prompts (selection lists, checkboxes and yes/no toggles such 
 reads the last command's output, announces when long commands finish, and adds a
 CLI mode with word-processor style reading, selection and copying. Press NVDA+Alt+C, then H for help."""),
 	# version
-	addon_version="1.1.0",
+	addon_version="1.2.0",
 	# Brief changelog for this version
 	# Translators: what's new content for the add-on version to be shown in the add-on store
-	addon_changelog=_("""CLI mode replaces the one-key layer and review mode: NVDA+Alt+C turns it on and it stays on until Escape.
-New: select and copy by character, word, line or paragraph with Shift and the reading keys; Control+A, Control+C; copy word (W) and paragraph (Shift+C).
-New: moving to an error copies the error line (can be turned off).
-New: announcement when a long command finishes, also when you come back from another window.
-New: H, F1 or slash opens help; V opens all terminal text, Shift+V the last output; T reads the typed command.
-Fixed: when a selection list appeared, all its choices were read before the current one.
-Fixed: the keyboard shortcut tables in the add-on help page were not shown as tables."""),
+	addon_changelog=_("""New: progress bars and spinners (ollama, pip, npm, winget, docker, git) are read as a few percentages, beeps, or not at all, instead of every changing number.
+New: error summary: R reads the errors and warnings of the last command with file and line, Shift+R copies them; read automatically when a long command finishes.
+New: sounds for error, warning and success lines.
+New: command history window (Shift+H in CLI mode).
+Fixed: a newly opened PowerShell or Command Prompt was not recognised as a terminal until focus left and came back. A tone now confirms that CLI Helper is active in a terminal.
+Settings are now in groups, and every new feature can be configured."""),
 	# Author(s)
 	addon_author="Naeem Hashmi",
 	# URL for the add-on documentation support
