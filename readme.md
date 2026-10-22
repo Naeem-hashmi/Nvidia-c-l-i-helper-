@@ -196,7 +196,7 @@ py -3.13 -m pip install scons==4.10.1 Markdown==3.10
 py -3.13 -m SCons
 ```
 
-This produces `cliHelper-1.3.0.nvda-addon`. Run the tests with `python -m unittest discover tests`. They need neither Windows nor NVDA. The research behind the add-on, including sources, NVDA compatibility rules and a comparison with other terminal add-ons, is in [docs/research.md](docs/research.md), and the manual test checklist is in [docs/testing.md](docs/testing.md).
+This produces `cliHelper-1.3.0.nvda-addon`. Run the tests with `python -m unittest discover tests`. They need neither Windows nor NVDA.
 
 ## License and credits
 

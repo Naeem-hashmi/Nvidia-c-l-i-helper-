@@ -24,7 +24,7 @@ Open an issue and include:
    py -3.13 -m SCons
    ```
 
-4. Try the built add-on in NVDA. [docs/testing.md](docs/testing.md) lists what to check.
+4. Try the built add-on in NVDA, in Windows Terminal and in the Windows Console, with the newest NVDA and if possible an older one.
 5. Add a line to [changelog.md](changelog.md) and open a pull request.
 
 ### Where things are
@@ -48,4 +48,4 @@ Open an issue and include:
 2. Update `lastTestedNVDAVersion` in `buildVars.py` if you tested a newer NVDA.
 3. Commit, then tag and push: `git tag v1.3.0` and `git push origin v1.3.0`.
 4. GitHub Actions builds the add-on and publishes a release with `cliHelper-1.3.0.nvda-addon` and `cliHelper.nvda-addon` attached. Users of the GitHub version are offered the update the next time NVDA starts.
-5. To publish in the NVDA Add-on Store, follow [docs/publishing.md](docs/publishing.md).
+5. Submit the new version to the NVDA Add-on Store with the [Add-on registration form](https://github.com/nvaccess/addon-datastore/issues/new?template=registerAddon.yml), using the versioned download link of the release (for example `https://github.com/Naeem-hashmi/Nvidia-c-l-i-helper-/releases/download/v1.3.0/cliHelper-1.3.0.nvda-addon`).

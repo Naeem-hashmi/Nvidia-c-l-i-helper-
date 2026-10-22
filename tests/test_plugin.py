@@ -1,6 +1,6 @@
 # Exercises the add-on's NVDA-facing logic against minimal stand-ins for NVDA's modules.
 # This catches Python errors and logic bugs off Windows; behaviour with real terminals
-# still has to be checked in NVDA (see docs/testing.md).
+# still has to be checked in NVDA on Windows.
 import os
 import re
 import sys

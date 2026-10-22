@@ -6,7 +6,7 @@
 * New: update check. Once a day, shortly after NVDA starts, CLI Helper checks its GitHub releases. When a new version exists, a dialog offers Download and install, Remind me later, or Skip this version. U in CLI mode, or a button in settings, checks right away. By default the check leaves updates to the Add-on Store when the store installs updates by itself.
 * Changed: all beeps are off by default: sounds for errors, warnings and success, the tone when focus enters a terminal, and the new "tones" setting for CLI mode, copying and finished commands. Speech still says everything (for example "copied" after an error line is copied).
 * Changed: the question of an interactive prompt is read without key hints ("Pick a router", not "Pick a router » - Use arrow-keys. Return to submit.").
-* New: GitHub releases with a permanent "download latest" link, a contributing guide, a problem report template, and a publishing guide for the NVDA Add-on Store.
+* New: GitHub releases with a permanent "download latest" link, a contributing guide, and a problem report template.
 
 ## 1.2.0
 
