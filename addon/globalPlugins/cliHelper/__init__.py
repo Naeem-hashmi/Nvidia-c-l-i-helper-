@@ -34,6 +34,7 @@ from . import parsing
 from . import problems
 from . import reader
 from . import terminal
+from . import updater
 from .common import (
 	FOCUS_UNKNOWN_MESSAGE,
 	SCRIPT_CATEGORY,
@@ -46,6 +47,7 @@ from .common import (
 	problemsAsText,
 	promptRe,
 	summaryText,
+	tone,
 )
 from .overlay import CLITerminal
 from .settings import SettingsPanel
@@ -118,6 +120,7 @@ MODE_GESTURES = {
 	"kb:shift+f3": "findPrevious",
 	"kb:q": "toggleQuietMode",
 	"kb:s": "openSettings",
+	"kb:u": "checkForUpdates",
 	"kb:h": "help",
 	"kb:f1": "help",
 	"kb:/": "help",
@@ -228,6 +231,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._lastSearch = ""
 		self._clearSelection()
 		settingsDialogs.NVDASettingsDialog.categoryClasses.append(SettingsPanel)
+		try:
+			updater.scheduleStartupCheck()
+		except Exception:
+			log.debugWarning("CLI Helper: could not schedule the update check", exc_info=True)
 
 	def terminate(self):
 		try:
@@ -249,7 +256,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			if self._modeSuspended:
 				self._modeSuspended = False
 				self._bindMode()
-				tones.beep(880, 30)
+				tone(880, 30)
 			elif not self._inTerminal:
 				self._announceTerminal()
 			self._inTerminal = True
@@ -324,13 +331,13 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 				info = obj.makeTextInfo(textInfos.POSITION_LAST)
 			api.setReviewPosition(info)
 			self._bindMode()
-			tones.beep(880, 40)
+			tone(880, 40)
 			if announce:
 				# Translators: Reported when CLI mode is turned on.
 				ui.message(_("CLI mode"))
 		else:
 			self._unbindMode()
-			tones.beep(440, 40)
+			tone(440, 40)
 			if announce:
 				# Translators: Reported when CLI mode is turned off and keys go to the shell again.
 				ui.message(_("Typing mode"))
@@ -437,14 +444,18 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._clearSelection()
 		pos = self._findLine(start, direction, predicate)
 		if pos is None:
-			tones.beep(220, 60)
+			tone(220, 60)
 			ui.message(notFound)
 			return
 		api.setReviewPosition(pos)
 		self._speakLine(pos)
 		if copyFound and api.copyToClip(_lineText(pos).strip()):
-			# A short high click tells that the line is on the clipboard.
-			tones.beep(1200, 20)
+			if conf()["tones"]:
+				# A short high click tells that the line is on the clipboard.
+				tone(1200, 20)
+			else:
+				# Translators: Said after an error line that was copied to the clipboard.
+				ui.message(_("copied"))
 
 	# Reading, using NVDA's own review commands so speech, braille and settings behave as usual
 
@@ -572,7 +583,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			self._selAnchor = pos.copy()
 		target = findTarget(pos.copy())
 		if target is None or target.compareEndPoints(pos, "startToStart") == 0:
-			tones.beep(220, 40)
+			tone(220, 40)
 			return
 		target.collapse()
 		forward = target.compareEndPoints(pos, "startToStart") > 0
@@ -985,6 +996,16 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	@script(
 		# Translators: Description of a command in the Input Gestures dialog.
+		description=_("Checks GitHub for a new version of CLI Helper"),
+	)
+	def script_checkForUpdates(self, gesture):
+		# Translators: Reported when a manual update check starts.
+		ui.message(_("Checking for updates"))
+		self._suspendForDialog()
+		updater.checkInBackground(True)
+
+	@script(
+		# Translators: Description of a command in the Input Gestures dialog.
 		description=_("Opens the CLI Helper settings"),
 	)
 	def script_openSettings(self, gesture):
@@ -1061,6 +1082,7 @@ HELP_TEXT = _(
 	"<ul>"
 	"<li>Q: quiet mode on or off (stop reading new output automatically)</li>"
 	"<li>S: settings</li>"
+	"<li>U: check for a new version of CLI Helper</li>"
 	"<li>H, F1 or slash: this help</li>"
 	"<li>Escape or NVDA+Alt+C: leave CLI mode</li>"
 	"</ul>"

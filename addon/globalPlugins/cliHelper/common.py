@@ -5,6 +5,8 @@
 
 """Configuration and small helpers shared by the add-on's modules."""
 
+import re
+
 import addonHandler
 import config
 import ui
@@ -28,12 +30,18 @@ config.conf.spec[CONFIG_SECTION] = {
 	"summaryCount": "integer(min=1, max=10, default=1)",
 	"summaryMaxChars": "integer(min=40, max=1000, default=150)",
 	"summaryLocation": "boolean(default=True)",
-	# Sounds for new output
-	"soundErrors": "boolean(default=True)",
-	"soundWarnings": "boolean(default=True)",
-	"soundSuccess": "boolean(default=True)",
+	# Sounds. All off by default: speech says everything, sounds are an opt-in extra.
+	"soundErrors": "boolean(default=False)",
+	"soundWarnings": "boolean(default=False)",
+	"soundSuccess": "boolean(default=False)",
+	# Short tones for CLI mode on and off, copying, and finished commands.
+	"tones": "boolean(default=False)",
 	# What happens when focus lands in a terminal: off, tone or speech.
-	"terminalEntry": 'option("off", "tone", "speech", default="tone")',
+	"terminalEntry": 'option("off", "tone", "speech", default="off")',
+	# Update check against GitHub releases: auto (unless the Add-on Store updates add-ons itself), on, off.
+	"updateCheck": 'option("auto", "on", "off", default="auto")',
+	"updateLastCheck": "integer(default=0)",
+	"updateSkipVersion": "string(default='')",
 	"copyErrorLines": "boolean(default=True)",
 	"finishedAfterSeconds": "integer(min=0, max=3600, default=5)",
 	"unassignedKeysLeaveMode": "boolean(default=False)",
@@ -51,6 +59,14 @@ FOCUS_UNKNOWN_MESSAGE = _("current choice shown only by colour, not detectable i
 
 def conf():
 	return config.conf[CONFIG_SECTION]
+
+
+def tone(hz, ms):
+	"""A feedback tone, played only if tones are turned on in settings."""
+	if conf()["tones"]:
+		import tones
+
+		tones.beep(hz, ms)
 
 
 def promptRe():
@@ -71,8 +87,16 @@ def describeChoice(menu, item):
 	return ", ".join(parts)
 
 
+_HINT_TAIL_RE = re.compile(r"\s+[›»>]\s+-\s+.*$")
+_HINT_PARENS_RE = re.compile(r"(?i)\s*\([^)]*(?:arrow|space|select|toggle|navigate|enter|return)[^)]*\)")
+
+
 def plainQuestion(menu):
-	return menu.question.lstrip("?◆◇* ").strip()
+	"""The question without its symbols and key hints: "Pick a router", not "? Pick a router » - Use arrow-keys"."""
+	text = menu.question.lstrip("?◆◇* ").strip()
+	text = _HINT_TAIL_RE.sub("", text)
+	text = _HINT_PARENS_RE.sub("", text)
+	return text.rstrip(" ›»…").strip()
 
 
 def copyText(text, message):

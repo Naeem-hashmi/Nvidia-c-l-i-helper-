@@ -1,10 +1,32 @@
 # CLI Helper for NVDA
 
-CLI Helper is an NVDA add-on for Command Prompt, PowerShell, Windows Terminal, WSL, Git Bash, PuTTY, mintty and every other console NVDA treats as a terminal. Its goal is to make the command line read like a document, and to make interactive installers such as `npx create-next-app`, `npm create vite` and `npm init` usable by speech and braille.
+CLI Helper is a free, open source add-on for the [NVDA screen reader](https://www.nvaccess.org/). It makes Command Prompt, PowerShell, Windows Terminal, WSL, Git Bash, PuTTY and other consoles as comfortable to read as a document. It also makes interactive installers such as `npx create-next-app`, `npm create vite` and `npm init` usable with speech and braille.
 
-* Version: 1.2.0
-* NVDA compatibility: 2019.3 to 2026.3 (written to run on NVDA's 32-bit Python 3.7 and 3.11 releases and the 64-bit Python 3.13 releases). So far it has been verified only off Windows; see "Testing status" below.
-* License: GPL v2
+* Latest version: 1.3.0
+* Works with: NVDA 2019.3 to 2026.3, on Windows 10 and 11
+* License: GNU General Public License version 2
+
+## Download
+
+* **[Download the latest version of CLI Helper (.nvda-addon file)](https://github.com/Naeem-hashmi/Nvidia-c-l-i-helper-/releases/latest/download/cliHelper.nvda-addon)**
+* [All versions and their release notes](https://github.com/Naeem-hashmi/Nvidia-c-l-i-helper-/releases)
+* NVDA Add-on Store: CLI Helper has not been submitted yet. Once it is listed, you will be able to install and update it from NVDA menu > Tools > Add-on Store.
+
+## Install
+
+1. Download the `.nvda-addon` file with the link above.
+2. Open the downloaded file, for example by pressing Enter on it in File Explorer or in your browser's downloads list.
+3. NVDA asks whether you want to install CLI Helper. Choose Yes.
+4. Restart NVDA when asked.
+
+To remove it later, use NVDA menu > Tools > Add-on Store > Installed add-ons.
+
+## Quick start
+
+1. Open PowerShell, Command Prompt or Windows Terminal, and run any command. New output is read as usual.
+2. Press **NVDA+Alt+C** to turn on CLI mode. Now the arrow keys read the output by character, word, line or paragraph, as in a word processor. Shift with the arrow keys selects, and Control+C copies.
+3. Press **H** in CLI mode to hear every key. Press **Escape** to go back to typing.
+4. Try an interactive installer such as `npx create-next-app@latest`: the arrow keys now say only the choice you move to.
 
 ## What it adds
 
@@ -22,7 +44,7 @@ Recognised prompt styles: Inquirer and @inquirer/prompts, prompts (used by creat
 
 ### CLI mode: NVDA+Alt+C
 
-Press **NVDA+Alt+C** once. Until you press **Escape** (or NVDA+Alt+C again), single keys read, select and copy the terminal like a word processor instead of going to the shell. CLI mode stays on between keys, so you can read, then copy, then find, without pressing NVDA+Alt+C again. It switches off by itself when you move to another window, and it comes back after you close one of the add-on's own windows (help, settings, find, reader). NVDA's own commands, such as NVDA+T or the numpad review keys, keep working. A key with no command gives a low beep. If you would rather have such keys leave CLI mode and be typed, turn that on in settings.
+Press **NVDA+Alt+C** once; NVDA says "CLI mode". Until you press **Escape** (or NVDA+Alt+C again), single keys read, select and copy the terminal like a word processor instead of going to the shell. CLI mode stays on between keys, so you can read, then copy, then find, without pressing NVDA+Alt+C again. It switches off by itself when you move to another window, and it comes back after you close one of the add-on's own windows (help, settings, find, reader). NVDA's own commands, such as NVDA+T or the numpad review keys, keep working. A key with no command gives a low beep. If you would rather have such keys leave CLI mode and be typed, turn that on in settings.
 
 #### Reading
 
@@ -60,7 +82,7 @@ While you select, NVDA says the text followed by "selected", or "unselected" whe
 | --- | --- |
 | O / Shift+O | Read / copy the output of the last command |
 | T / Shift+T | Read / copy the command typed at the prompt |
-| E / Shift+E | Next / previous line with an error or warning. The line is also copied to the clipboard, which a short high click confirms (this can be turned off in settings) |
+| E / Shift+E | Next / previous line with an error or warning. The line is also copied to the clipboard, and NVDA says "copied" (copying can be turned off in settings) |
 | M | Read the interactive prompt on screen, with all its choices |
 | R / Shift+R | Read a summary of the last command's errors and warnings / copy them all, with file and line |
 | Shift+H | Command history: every command in this terminal with its output |
@@ -79,7 +101,7 @@ Character, word and line movement use NVDA's own review cursor commands, so spee
 
 ### Command finished notice
 
-When a command that ran for at least 5 seconds finishes (the shell prompt comes back), you hear two rising tones and "Command finished after 42 seconds". If its output contained errors, the tones fall, you hear "Command finished with errors", and then a short error summary (see below). If you were in another window, for example your browser during a long `npm install`, you hear it as soon as you come back to the terminal. Change the number of seconds in settings, or set it to 0 to turn this off.
+When a command that ran for at least 5 seconds finishes (the shell prompt comes back), you hear "Command finished after 42 seconds". If its output contained errors, you hear "Command finished with errors", and then a short error summary (see below). With tones turned on in settings, two rising tones (or falling tones, for errors) come first. If you were in another window, for example your browser during a long `npm install`, you hear it as soon as you come back to the terminal. Change the number of seconds in settings, or set it to 0 to turn this off.
 
 ### Downloads and progress bars
 
@@ -111,7 +133,7 @@ Settings (Errors): read the summary when a long command finishes (on), how many 
 
 ### Sounds for new output
 
-Short sounds tell you how output is going without listening to all of it: a low buzz for an error line, a middle tone for a warning, and a rising chirp for success ("done", "passed", "compiled successfully", "found 0 vulnerabilities"). Only one sound plays per burst of output, the most important one. Each sound can be turned off in settings.
+Sounds are off by default, because speech already says everything. If you like, turn them on in settings: a low buzz for an error line, a middle tone for a warning, and a rising chirp for success ("done", "passed", "compiled successfully", "found 0 vulnerabilities"). Only one sound plays per burst of output, the most important one. Another setting adds short tones when CLI mode turns on and off, when an error line is copied, and when a long command finishes.
 
 ### Command history
 
@@ -119,7 +141,7 @@ In CLI mode, Shift+H opens a list of every command in this terminal, newest last
 
 ### Terminal detection
 
-When a new PowerShell or Command Prompt window opens, NVDA sometimes gets focus for the window before its text area is ready, and then treats it as an ordinary window until you switch away and back. CLI Helper notices this and asks Windows which control really has the keyboard focus, so the terminal works at once. When focus arrives in a terminal you hear a short rising tone, so you know CLI Helper is active. In settings, this can instead say "CLI Helper active", or do nothing.
+When a new PowerShell or Command Prompt window opens, NVDA sometimes gets focus for the window before its text area is ready, and then treats it as an ordinary window until you switch away and back. CLI Helper notices this and asks Windows which control really has the keyboard focus, so the terminal works at once. If you want confirmation that CLI Helper is active when focus arrives in a terminal, choose a short rising tone or the words "CLI Helper active" in settings (off by default).
 
 ### Reader window
 
@@ -133,10 +155,11 @@ V (whole terminal) and Shift+V (last output) open the text in a read-only, multi
 
 NVDA menu > Preferences > Settings > CLI Helper. The settings are in groups:
 
-* **Reading**: quiet mode; support interactive prompts; what happens when focus moves to a terminal (tone, speech or nothing).
+* **Reading**: quiet mode; support interactive prompts; what happens when focus moves to a terminal (nothing by default, a tone, or speech).
 * **Downloads and progress bars**: how progress is reported; every how many percent; at most every how many seconds.
 * **Errors**: read an error summary when a long command finishes; number of errors read in detail; longest message; file and line; copy the error line when moving to an error; announce when a command finishes after this many seconds.
-* **Sounds for new output**: errors, warnings, success, each on or off.
+* **Sounds for new output**: errors, warnings, success, and short tones for CLI mode, copying and finished commands. All off by default.
+* **Updates**: check GitHub for new versions automatically, always, or never; and a button to check now.
 * **CLI mode and patterns**: whether keys without a command leave CLI mode; the shell prompt pattern, a regular expression for your prompt if it is unusual (the default recognises PowerShell `PS C:\>`, Command Prompt `C:\>`, bash, zsh and WSL `user@host:~$`, Git Bash `$ ` and the Python REPL `>>> `); the error pattern.
 
 ## Tips
@@ -151,17 +174,33 @@ NVDA menu > Preferences > Settings > CLI Helper. The settings are in groups:
 * Prompts drawn by full-screen programs (vim, htop, tmux menus, `less`) are not menus in this sense. Use CLI mode to read them.
 * Prompt and error detection uses patterns. If your shell prompt looks unusual, set the prompt pattern in settings.
 
-## Testing status
+## Updating
 
-The parsing logic and the add-on's event and key handling are covered by automated tests (`python -m unittest discover tests`). They use screen text in the format the prompt libraries print, and stand-ins for NVDA's modules. The build produces a valid `.nvda-addon` package. These tests do not replace trying the add-on with NVDA on Windows. The checklist in `docs/testing.md` lists what to try, and on which NVDA versions, before publishing to the add-on store.
+* **From the NVDA Add-on Store** (once CLI Helper is listed there): NVDA 2024.3 and later tell you about add-on updates when NVDA starts.
+* **From GitHub**: CLI Helper checks this project's releases once a day, about 20 seconds after NVDA starts. When there is a new version, a dialog shows what is new and offers **Download and install**, **Remind me later** or **Skip this version**. Installing goes through NVDA's usual add-on installation dialog. You can check right away with U in CLI mode, or with the "Check for updates now" button in settings. In settings you can also turn the check off. The default ("Automatic") leaves updates to the Add-on Store if the store is set to install updates by itself.
 
-## For developers
+## Reporting problems and contributing
 
-Build on Windows (Python 3.13 and Git required):
+* Report a problem or suggest an idea on the [issues page](https://github.com/Naeem-hashmi/Nvidia-c-l-i-helper-/issues). Include your NVDA version, your terminal (for example Windows Terminal or Command Prompt), the command you ran, and if possible the NVDA log (NVDA menu > Tools > View log).
+* Code contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+* What has changed in each version: [changelog.md](changelog.md).
+
+## Building from source
+
+On Windows, with [Python 3.13](https://www.python.org/) and [Git](https://git-scm.com/):
 
 ```powershell
+git clone https://github.com/Naeem-hashmi/Nvidia-c-l-i-helper-.git
+cd Nvidia-c-l-i-helper-
 py -3.13 -m pip install scons==4.10.1 Markdown==3.10
 py -3.13 -m SCons
 ```
 
-This produces `cliHelper-1.2.0.nvda-addon`. Run the tests with `python -m unittest discover tests`. The research behind the add-on, including sources, NVDA compatibility rules and a comparison with existing add-ons, is in `docs/research.md`.
+This produces `cliHelper-1.3.0.nvda-addon`. Run the tests with `python -m unittest discover tests`. They need neither Windows nor NVDA. The research behind the add-on, including sources, NVDA compatibility rules and a comparison with other terminal add-ons, is in [docs/research.md](docs/research.md), and the manual test checklist is in [docs/testing.md](docs/testing.md).
+
+## License and credits
+
+CLI Helper is free software under the [GNU General Public License version 2](COPYING.txt), the same license as NVDA.
+
+* Built with NV Access's [NVDA add-on template](https://github.com/nvaccess/AddonTemplate).
+* Inspired by [Console Toolkit](https://github.com/mltony/nvda-console-toolkit), [Terminal Access for NVDA](https://github.com/PratikP1/Terminal-Access-for-NVDA), [TDSR](https://github.com/tspivey/tdsr) and [Speakup](https://github.com/linux-speakup/speakup).

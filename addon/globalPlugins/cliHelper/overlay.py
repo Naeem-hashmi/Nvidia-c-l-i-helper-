@@ -21,13 +21,27 @@ from . import parsing
 from . import problems
 from . import progress
 from . import terminal
-from .common import FOCUS_UNKNOWN_MESSAGE, conf, describeChoice, errorRe, plainQuestion, promptRe, summaryText
+from .common import (
+	FOCUS_UNKNOWN_MESSAGE,
+	conf,
+	describeChoice,
+	errorRe,
+	plainQuestion,
+	promptRe,
+	summaryText,
+	tone,
+)
 
 addonHandler.initTranslation()
 
 #: How often (ms) and how many times to check the screen after a key press in an interactive prompt.
 POLL_INTERVAL = 40
 POLL_ATTEMPTS = 12
+#: After an arrow key in a prompt, everything NVDA reports for this long is the prompt being redrawn.
+KEY_QUIET = 1.5
+#: A prompt counts as gone only after it has not been seen on screen for this long. Prompt libraries
+#: erase and redraw the whole prompt on every key, so a single screen read can catch it half drawn.
+MENU_GRACE = 0.6
 #: While a command runs, how often (seconds) at most to look at the screen for the returning shell prompt.
 FINISH_CHECK_INTERVAL = 1.0
 #: After seeing a progress bar or spinner, numbers and fragments count as progress for this many seconds.
@@ -89,26 +103,83 @@ class CLITerminal(NVDAObject):
 	_cliSpinnerSpoken = 0.0
 	_cliLastSounds = None
 
+	_cliMenuMissSince = None
+
 	def initOverlayClass(self):
 		self._cliScreenCache = (0.0, None)
+		#: Labels and questions of the prompt being answered, to recognise its text even after it left the screen.
+		self._cliMenuTexts = set()
 
 	# Interactive prompts
 
 	def cliDetectMenu(self, maxAge=0.0):
 		"""Return (menu, screenLines) for the interactive prompt on screen, or (None, lines).
 
-		A result read less than maxAge seconds ago is reused.
+		A result read less than maxAge seconds ago is reused. Every fresh read updates what the add-on
+		remembers about the prompt being answered.
 		"""
 		stamp, cached = getattr(self, "_cliScreenCache", (0.0, None))
-		if cached is not None and time.time() - stamp <= maxAge:
+		now = time.time()
+		if cached is not None and now - stamp <= maxAge:
 			return cached
 		lines = terminal.getScreenLines(self)
 		menu = parsing.parseMenu(lines, promptRe())
 		if menu is not None and menu.focusIndex is None:
 			menu.focusIndex = terminal.emphasisedIndex(self, menu)
+		if menu is not None:
+			self._cliMenuActive = True
+			self._cliMenuMissSince = None
+			texts = getattr(self, "_cliMenuTexts", None)
+			if texts is None:
+				texts = self._cliMenuTexts = set()
+			texts.update(item.label for item in menu.items)
+			if menu.question:
+				texts.add(menu.question.strip())
+				texts.add(plainQuestion(menu))
+		elif self._cliMenuActive and self._cliMenuMissSince is None:
+			self._cliMenuMissSince = now
 		result = (menu, lines)
-		self._cliScreenCache = (time.time(), result)
+		self._cliScreenCache = (now, result)
 		return result
+
+	def cliMenuLive(self):
+		"""Whether a prompt is being answered: seen on screen, and not missing for longer than MENU_GRACE."""
+		if not self._cliMenuActive:
+			return False
+		if self._cliMenuMissSince is not None and time.time() - self._cliMenuMissSince > MENU_GRACE:
+			self.cliForgetMenu()
+			return False
+		return True
+
+	def cliForgetMenu(self):
+		"""The prompt is finished (Enter was pressed, or it has gone from the screen)."""
+		self._cliMenuActive = False
+		self._cliMenuMissSince = None
+		self._cliMenuTexts = set()
+		self._cliMenuSignature = None
+		self._cliMenuState = None
+		self._cliSuppressUntil = 0.0
+		self._cliPollToken += 1
+
+	def _cliIsKnownMenuText(self, line):
+		"""Whether reported text is part of the prompt being answered, even if it is no longer on screen.
+
+		NVDA may report a whole choice line ("❯ Pages Router"), only the changed part of it, or a hint line.
+		"""
+		stripped = line.strip()
+		if not stripped:
+			return True
+		if parsing.HINT_RE.search(stripped):
+			return True
+		parsed = parsing.parseChoiceLine(line)
+		text = parsed[0] if parsed else stripped.strip(parsing.FRAME_CHARS)
+		if not text.strip(parsing.FRAME_CHARS + "".join(parsing.POINTERS)):
+			# Only markers and frame characters.
+			return True
+		for known in getattr(self, "_cliMenuTexts", ()):
+			if text in known or (len(known) >= 3 and known in text):
+				return True
+		return False
 
 	def cliAnnounceMenu(self, menu, afterKey=False):
 		"""Speak the prompt: the question and focused choice when it first appears, then only what changed."""
@@ -158,22 +229,24 @@ class CLITerminal(NVDAObject):
 				menu, _lines = self.cliDetectMenu()
 			except Exception:
 				log.debugWarning("CLI Helper: menu detection failed", exc_info=True)
-		if menu is None:
+		if menu is None and not (conf()["interactivePrompts"] and self.cliMenuLive()):
 			self._cliCallOriginal(fallbackScript, gesture)
 			return
-		self._cliMenuActive = True
-		if self._cliMenuSignature != menu.signature():
+		# Inside a prompt. The screen may be half redrawn right now (menu is None); the poll waits for it.
+		if menu is not None and self._cliMenuSignature != menu.signature():
 			# The prompt appeared without being announced (e.g. quiet mode); remember it silently.
 			self._cliMenuSignature = menu.signature()
 			self._cliMenuState = menu.state()
-		before = menu.state()
 		gesture.send()
-		self._cliSuppressUntil = time.time() + 1.0
+		self._cliSuppressUntil = time.time() + KEY_QUIET
+		self._cliStartPoll(menu.state() if menu is not None else None, afterKey=True)
+
+	def _cliStartPoll(self, before, afterKey):
+		"""Watch the screen until the prompt has been redrawn, then announce it."""
 		self._cliPollToken += 1
-		token = self._cliPollToken
-		# Toggles change only colour, so the text never changes; wait briefly then read the formatting.
-		attempts = 3 if menu.kind == parsing.Menu.TOGGLE else POLL_ATTEMPTS
-		core.callLater(POLL_INTERVAL, self._cliPollMenu, token, before, attempts, menu.kind)
+		core.callLater(
+			POLL_INTERVAL, self._cliPollMenu, self._cliPollToken, before, POLL_ATTEMPTS, afterKey, None
+		)
 
 	def _cliCallOriginal(self, scriptNames, gesture):
 		"""Run the first of the named scripts that NVDA's own classes provide, or just send the key."""
@@ -186,49 +259,58 @@ class CLITerminal(NVDAObject):
 				return
 		gesture.send()
 
-	def _cliPollMenu(self, token, before, attemptsLeft, kind):
+	def _cliPollMenu(self, token, before, attemptsLeft, afterKey, previous):
+		"""Announce the prompt once two screen reads in a row agree, so a half drawn prompt is never spoken."""
 		if token != self._cliPollToken:
 			return
-		menu, _lines = self.cliDetectMenu()
-		if menu is None:
+		try:
+			menu, _lines = self.cliDetectMenu()
+		except Exception:
+			log.debugWarning("CLI Helper: menu detection failed", exc_info=True)
+			menu = None
+		current = (menu.signature(), menu.state()) if menu is not None else None
+		if menu is not None:
+			stable = current == previous
+			changed = before is None or menu.state() != before
+			# Toggles change only colour, so give the formatting a little longer to settle.
+			settled = menu.kind != parsing.Menu.TOGGLE or attemptsLeft <= POLL_ATTEMPTS - 2
+			if (stable and settled and (changed or menu.kind == parsing.Menu.TOGGLE)) or attemptsLeft <= 1:
+				if afterKey:
+					# Always speak after a key press, even when focus did not move (for example at the end of a list).
+					self._cliMenuState = None
+				self.cliAnnounceMenu(menu, afterKey=afterKey)
+				return
+		if attemptsLeft <= 1:
 			return
-		if (menu.state() != before and kind != parsing.Menu.TOGGLE) or attemptsLeft <= 1:
-			# Always speak after a key press, even when focus did not move (for example at the end of a list).
-			self._cliMenuState = None
-			self.cliAnnounceMenu(menu, afterKey=True)
-			return
-		core.callLater(POLL_INTERVAL, self._cliPollMenu, token, before, attemptsLeft - 1, kind)
+		core.callLater(POLL_INTERVAL, self._cliPollMenu, token, before, attemptsLeft - 1, afterKey, current)
 
 	def _cliScheduleMenuAnnounce(self):
-		if self._cliPendingAnnounce is not None:
-			try:
-				self._cliPendingAnnounce.Stop()
-			except Exception:
-				pass
-
-		def announce():
-			self._cliPendingAnnounce = None
-			if time.time() < self._cliSuppressUntil:
-				# A key press is being handled; its poll will speak.
-				return
-			menu, _lines = self.cliDetectMenu(maxAge=0.1)
-			if menu is not None:
-				self.cliAnnounceMenu(menu)
-
-		self._cliPendingAnnounce = core.callLater(POLL_INTERVAL, announce)
+		"""Prompt text was reported without an arrow key (it appeared, or Space toggled a checkbox)."""
+		if time.time() < self._cliSuppressUntil:
+			# An arrow key is being handled; its poll will speak.
+			return
+		self._cliStartPoll(None, afterKey=False)
 
 	def _cliFilterMenuText(self, lines):
-		"""Remove text that belongs to an interactive prompt on screen; the prompt is announced instead.
+		"""Remove text that belongs to an interactive prompt; the prompt is announced instead.
 
-		NVDA reports changed text, which may be whole lines or only fragments of lines (for example
-		just the words that differ when one question replaces another). So once a prompt is on screen,
-		every batch is compared with the prompt's area of the screen, from its question to the bottom.
+		NVDA reports changed text from its own thread, as whole lines or only fragments of lines, and
+		prompt libraries erase and redraw the whole prompt on every key. So by the time a batch arrives,
+		the screen may already show a newer state, or be half drawn. Text is therefore matched against
+		the prompt's area of the screen and against the choices and questions remembered from it.
 		"""
 		if not conf()["interactivePrompts"]:
 			return lines
-		if not self._cliMenuActive and not any(_hasPromptMarker(line) for line in lines):
+		live = self.cliMenuLive()
+		if not live and not any(_hasPromptMarker(line) for line in lines):
 			# Ordinary output: never read the screen for it, so long builds and installs cost nothing.
 			return lines
+		if live and time.time() < self._cliSuppressUntil:
+			# An arrow key was just pressed in the prompt: this is the prompt being redrawn,
+			# and the key's poll announces the result.
+			return []
+		menu = None
+		kept = lines
 		# A screen read from a moment ago is reused when it explains all the new text;
 		# otherwise the screen has changed since, so read it again.
 		for maxAge in (0.05, 0.0):
@@ -240,13 +322,18 @@ class CLITerminal(NVDAObject):
 			if menu is None:
 				continue
 			region = [line.strip() for line in screen[menu.startIndex :] if line.strip()]
-			kept = [line for line in lines if line.strip() and not any(line.strip() in r for r in region)]
+			kept = [
+				line
+				for line in lines
+				if not any(line.strip() in r for r in region) and not self._cliIsKnownMenuText(line)
+			]
 			if not kept:
 				break
 		if menu is None:
-			self._cliMenuActive = False
-			return lines
-		self._cliMenuActive = True
+			if not self.cliMenuLive():
+				return lines
+			# Probably a half drawn screen: remove what is known to belong to the prompt, and look again shortly.
+			kept = [line for line in lines if not self._cliIsKnownMenuText(line)]
 		if len(kept) != len(lines):
 			self._cliScheduleMenuAnnounce()
 		return kept
@@ -281,6 +368,9 @@ class CLITerminal(NVDAObject):
 		if command:
 			self._cliCommandStart = time.time()
 			self._cliCommandSawError = False
+		if self._cliMenuActive:
+			# Enter answers the prompt: what follows is ordinary output (or the next question).
+			self.cliForgetMenu()
 		# NVDA's terminal classes use Enter to flush typed characters; keep that behaviour.
 		self._cliCallOriginal(("script_flush_queuedChars", "script_caret_newLine"), gesture)
 
@@ -328,13 +418,13 @@ class CLITerminal(NVDAObject):
 			found = []
 		hasErrors = any(p.kind == problems.Problem.ERROR for p in found)
 		if hasErrors:
-			tones.beep(440, 80)
-			core.callLater(100, tones.beep, 330, 120)
+			tone(440, 80)
+			core.callLater(100, tone, 330, 120)
 			# Translators: Announced when a long command finishes and its output contained errors.
 			message = _("Command finished with errors after {seconds} seconds")
 		else:
-			tones.beep(660, 80)
-			core.callLater(100, tones.beep, 880, 120)
+			tone(660, 80)
+			core.callLater(100, tone, 880, 120)
 			# Translators: Announced when a long command finishes.
 			message = _("Command finished after {seconds} seconds")
 		message = message.format(seconds=int(round(seconds)))

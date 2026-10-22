@@ -25,6 +25,14 @@ PROGRESS_MODES = (
 	# Translators: A choice for how progress bars are reported.
 	("raw", _("Read every change, as NVDA does without the add-on")),
 )
+UPDATE_MODES = (
+	# Translators: A choice for the update check.
+	("auto", _("Automatic: check GitHub unless the Add-on Store updates add-ons by itself")),
+	# Translators: A choice for the update check.
+	("on", _("Always check GitHub once a day")),
+	# Translators: A choice for the update check.
+	("off", _("Never")),
+)
 ENTRY_MODES = (
 	# Translators: A choice for what happens when focus moves to a terminal.
 	("off", _("Nothing")),
@@ -135,6 +143,22 @@ class SettingsPanel(settingsDialogs.SettingsPanel):
 		self._check(group, "soundWarnings", _("Middle &tone for warnings"))
 		# Translators: A setting of the add-on.
 		self._check(group, "soundSuccess", _("Rising c&hirp for success (done, passed, compiled)"))
+		self._check(
+			group,
+			"tones",
+			# Translators: A setting of the add-on.
+			_("Short tones for CLI mode on and off, copying, and &finished commands"),
+		)
+
+		# Translators: A group of settings.
+		group = self._group(helper, _("Updates"))
+		# Translators: A setting of the add-on.
+		self._choice(
+			group, "updateCheck", _("Check for new versions when NVDA starts, at most dail&y:"), UPDATE_MODES
+		)
+		# Translators: A button in the add-on's settings.
+		checkButton = group.addItem(wx.Button(self, label=_("Check for &updates now")))
+		checkButton.Bind(wx.EVT_BUTTON, self.onCheckNow)
 
 		# Translators: A group of settings.
 		group = self._group(helper, _("CLI mode and patterns"))
@@ -156,6 +180,11 @@ class SettingsPanel(settingsDialogs.SettingsPanel):
 			wx.TextCtrl,
 		)
 		self.errorPattern.SetValue(conf()["errorPattern"])
+
+	def onCheckNow(self, evt):
+		from . import updater
+
+		updater.checkInBackground(True)
 
 	def onSave(self):
 		for key, box in self._checks.items():

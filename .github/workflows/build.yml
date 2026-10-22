@@ -3,7 +3,7 @@ name: build addon
 on:
   push:
     branches: [ main, master ]
-    tags: ["*"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -40,16 +40,44 @@ jobs:
         path: ./*.nvda-addon
 
   release:
+    # Runs for tags such as v1.3.0: publishes a GitHub release with the add-on attached.
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: ["build"]
     permissions:
       contents: write
     steps:
+    - uses: actions/checkout@v4
+
     - uses: actions/download-artifact@v4
       with:
         name: packaged_addon
+        path: dist
+
+    - name: Prepare release files and notes
+      run: |
+        version="${GITHUB_REF_NAME#v}"
+        versioned="dist/cliHelper-${version}.nvda-addon"
+        test -f "$versioned"
+        # A copy with a fixed name, so https://github.com/<repo>/releases/latest/download/cliHelper.nvda-addon
+        # always downloads the newest version.
+        cp "$versioned" dist/cliHelper.nvda-addon
+        # Release notes: this version's section of changelog.md, plus the checksum.
+        awk -v v="$version" '$0 == "## " v {found=1; next} found && /^## / {exit} found {print}' changelog.md > notes.md
+        {
+          echo
+          echo "## Download"
+          echo
+          echo "Download **cliHelper-${version}.nvda-addon** below, open it, and NVDA asks to install it."
+          echo
+          echo "SHA256: \`$(sha256sum "$versioned" | cut -d' ' -f1)\`"
+        } >> notes.md
+
     - name: Release
       uses: softprops/action-gh-release@v2
       with:
-        files: "*.nvda-addon"
+        name: CLI Helper ${{ github.ref_name }}
+        body_path: notes.md
+        files: |
+          dist/cliHelper-*.nvda-addon
+          dist/cliHelper.nvda-addon

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0
+
+* Fixed: in selection lists (for example in create-next-app), Up and Down sometimes read only the new choice and sometimes the whole list. Prompt libraries erase and redraw the whole prompt on every key, while NVDA compares the screen on its own thread. So the add-on could see a screen that had already moved on, or was half drawn, and then let the redrawn lines be read. Now it remembers the choices of the prompt being answered, waits until the prompt is fully redrawn before speaking, and treats the prompt as finished only when Enter is pressed or it stays gone. A randomised test of 300 sessions with random timing now checks that raw choices are never read.
+* New: update check. Once a day, shortly after NVDA starts, CLI Helper checks its GitHub releases. When a new version exists, a dialog offers Download and install, Remind me later, or Skip this version. U in CLI mode, or a button in settings, checks right away. By default the check leaves updates to the Add-on Store when the store installs updates by itself.
+* Changed: all beeps are off by default: sounds for errors, warnings and success, the tone when focus enters a terminal, and the new "tones" setting for CLI mode, copying and finished commands. Speech still says everything (for example "copied" after an error line is copied).
+* Changed: the question of an interactive prompt is read without key hints ("Pick a router", not "Pick a router » - Use arrow-keys. Return to submit.").
+* New: GitHub releases with a permanent "download latest" link, a contributing guide, a problem report template, and a publishing guide for the NVDA Add-on Store.
+
 ## 1.2.0
 
 * New: downloads and progress bars. Tools such as ollama, pip, npm, winget, docker and git redraw their progress many times a second, and NVDA used to read every changing number. Progress is now read as a percentage every 25 percent (configurable), as rising beeps, both, or not at all. Spinners are read once by their text. The final 100 percent is always spoken.

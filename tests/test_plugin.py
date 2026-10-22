@@ -325,6 +325,10 @@ class Base(unittest.TestCase):
 			soundWarnings=False,
 			soundSuccess=False,
 			terminalEntry="tone",
+			tones=True,
+			updateCheck="off",
+			updateLastCheck=0,
+			updateSkipVersion="",
 			copyErrorLines=True,
 			finishedAfterSeconds=5,
 			unassignedKeysLeaveMode=False,
@@ -400,6 +404,131 @@ class OverlayTest(Base):
 		core.runPending()
 		self.assertNotIn("Tailwind CSS", spoken)
 		self.assertIn("Would you like to use Tailwind CSS?", spoken[-1])
+
+	# The three timing races behind "sometimes only the choice, sometimes everything" (fixed in 1.3.0).
+	# Prompt libraries erase and redraw the whole prompt on every key; NVDA diffs the screen on its own thread.
+
+	LIST = "? Pick a router\n{0} App Router\n{1} Pages Router\n{2} None"
+
+	def screenWithFocus(self, index):
+		marks = ["\u276f" if i == index else " " for i in range(3)]
+		return self.LIST.format(*marks)
+
+	def test_raceScreenMovedOnBeforeTheDiffArrived(self):
+		SCREEN["text"] = self.screenWithFocus(0)
+		obj = makeTerminal()
+		obj._reportNewLines(["? Pick a router", "\u276f App Router", "  Pages Router", "  None"])
+		core.runPending()
+		obj.script_cliDownArrow(
+			Gesture("kb:downarrow", onSend=lambda: SCREEN.update(text=self.screenWithFocus(1)))
+		)
+		obj.script_cliDownArrow(
+			Gesture("kb:downarrow", onSend=lambda: SCREEN.update(text=self.screenWithFocus(2)))
+		)
+		# The diff of the first key press arrives only now, when the screen already shows the second,
+		# and more than 50 milliseconds after the add-on last read the screen.
+		obj._cliScreenCache = (0.0, None)
+		obj._reportNewLines(["  App Router", "\u276f Pages Router"])
+		obj._reportNewLines(["  Pages Router", "\u276f None"])
+		core.runPending()
+		self.assertNotIn("\u276f Pages Router", spoken)
+		self.assertNotIn("  App Router", spoken)
+		self.assertEqual(spoken[-1], "None, 3 of 3")
+
+	def test_raceHalfDrawnScreen(self):
+		SCREEN["text"] = self.screenWithFocus(0)
+		obj = makeTerminal()
+		obj._reportNewLines(["? Pick a router", "\u276f App Router", "  Pages Router", "  None"])
+		core.runPending()
+		del spoken[:]
+		# The prompt was erased and not yet redrawn when the arrow key is pressed.
+		SCREEN["text"] = "PS C:\\dev> npx create-next-app\n"
+		gesture = Gesture("kb:downarrow", onSend=lambda: None)
+		obj.script_cliDownArrow(gesture)
+		self.assertEqual(gesture.sent, 1)
+		self.assertNotIn("<nvda caret line>", spoken)
+		# NVDA reports the redrawn lines while the screen is still half drawn.
+		obj._reportNewLines(["? Pick a router", "  App Router", "\u276f Pages Router", "  None"])
+		self.assertEqual(spoken, [])
+		# The poll keeps trying until the prompt is back, then speaks only the choice.
+		SCREEN["text"] = self.screenWithFocus(1)
+		core.runPending()
+		self.assertEqual(spoken, ["<cancel>", "Pages Router, 2 of 3"])
+
+	def test_promptFinishedWithEnterIsNotFilteredAnyMore(self):
+		SCREEN["text"] = self.screenWithFocus(0)
+		obj = makeTerminal("? Pick a router")
+		obj._reportNewLines(["? Pick a router", "\u276f App Router", "  Pages Router", "  None"])
+		core.runPending()
+		obj.script_cliEnter(Gesture("kb:enter"))
+		SCREEN["text"] = "\u221a Pick a router \u00bb App Router\nCreating a new Next.js app in C:\\dev\\app"
+		obj._reportNewLines(["Creating a new Next.js app in C:\\dev\\app"])
+		self.assertEqual(spoken[-1], "Creating a new Next.js app in C:\\dev\\app")
+
+	def test_randomTimingNeverReadsRawChoices(self):
+		import random
+
+		rng = random.Random(1234)
+		labels = ["App Router", "Pages Router", "None", "Custom"]
+
+		def screen(focus):
+			rows = [
+				"PS C:\\dev> npx create-next-app",
+				"? Pick a router \u00bb - Use arrow-keys. Return to submit.",
+			]
+			rows += [("\u276f " if i == focus else "  ") + label for i, label in enumerate(labels)]
+			return "\n".join(rows)
+
+		for run in range(300):
+			del spoken[:]
+			focus = 0
+			SCREEN["text"] = screen(focus)
+			obj = makeTerminal()
+			obj._reportNewLines(screen(focus).split("\n")[1:])
+			core.runPending()
+			pendingDiffs = []
+			for step in range(rng.randint(1, 8)):
+				old = focus
+				focus = (focus + (1 if rng.random() < 0.7 else -1)) % len(labels)
+				new = focus
+				halfDrawn = rng.random() < 0.3
+
+				def send(new=new, halfDrawn=halfDrawn):
+					# Prompt libraries erase the prompt, then draw it again.
+					SCREEN["text"] = "PS C:\\dev> npx create-next-app" if halfDrawn else screen(new)
+
+				obj.script_cliDownArrow(Gesture("kb:downarrow", onSend=send))
+				SCREEN["text"] = screen(new)
+				diff = [("  " + labels[old]), ("\u276f " + labels[new])]
+				if rng.random() < 0.3:
+					diff = [labels[new][: rng.randint(2, len(labels[new]))]]
+				pendingDiffs.append(diff)
+				if rng.random() < 0.5:
+					# NVDA's report arrives late, after more keys or after the cache expired.
+					obj._cliScreenCache = (0.0, None)
+				while pendingDiffs and rng.random() < 0.6:
+					obj._reportNewLines(pendingDiffs.pop(0))
+				if rng.random() < 0.5:
+					core.runPending()
+			for diff in pendingDiffs:
+				obj._reportNewLines(diff)
+			core.runPending()
+			raw = [m for m in spoken if any(label in m for label in labels) and ", " not in m]
+			self.assertEqual(raw, [], "run %d spoke raw prompt text: %r" % (run, spoken))
+			self.assertTrue(
+				spoken[-1].startswith(labels[focus] + ", " + str(focus + 1) + " of 4"),
+				"run %d ended with %r, focus %r" % (run, spoken[-1:], labels[focus]),
+			)
+
+	def test_questionHintsAreNotSpoken(self):
+		import types as t
+
+		for question in (
+			"? Pick a router \u00bb - Use arrow-keys. Return to submit.",
+			"? Pick a router (Use arrow keys)",
+			"? Pick a router \u203a",
+		):
+			self.assertEqual(cliHelper.plainQuestion(t.SimpleNamespace(question=question)), "Pick a router")
 
 	def test_checkboxToggleSpeaksOnlyTheChange(self):
 		SCREEN["text"] = "? Select features\n\u276f\u25c9 TypeScript\n \u25ef ESLint"
@@ -545,6 +674,108 @@ class ProgressAndSoundTest(Base):
 		self.assertEqual(beeps, [200, 1000, 1300])
 
 
+class DefaultsTest(Base):
+	def test_beepsAreOffByDefault(self):
+		import importlib
+
+		common = importlib.import_module("cliHelper.common")
+		spec = common.config.conf.spec["cliHelper"]
+		for key in ("soundErrors", "soundWarnings", "soundSuccess", "tones"):
+			self.assertIn("default=False", spec[key], key)
+		self.assertIn('default="off"', spec["terminalEntry"])
+		self.assertIn('default="speech"', spec["progressMode"])
+
+	def test_tonesSettingSilencesModeBeeps(self):
+		CONF["cliHelper"]["tones"] = False
+		obj = makeTerminal("PS C:\\p> ")
+		api.getFocusObject = lambda: obj
+		plugin = cliHelper.GlobalPlugin()
+		plugin.script_toggleMode(None)
+		plugin.script_toggleMode(None)
+		self.assertEqual(beeps, [])
+		self.assertEqual(spoken, ["CLI mode", "Typing mode"])
+
+
+class UpdaterTest(Base):
+	def setUp(self):
+		super(UpdaterTest, self).setUp()
+		from cliHelper import updater
+
+		self.updater = updater
+
+	def test_versions(self):
+		u = self.updater
+		self.assertEqual(u.parseVersion("v1.2.0"), (1, 2, 0))
+		self.assertTrue(u.isNewer("1.3.0", "1.2.0"))
+		self.assertTrue(u.isNewer("1.10", "1.9.5"))
+		self.assertFalse(u.isNewer("1.2", "1.2.0"))
+		self.assertFalse(u.isNewer("1.1.9", "1.2.0"))
+
+	def test_releaseFromGitHubJson(self):
+		release = self.updater.releaseFromJson(
+			{
+				"tag_name": "v1.3.0",
+				"body": "Fixes",
+				"html_url": "https://github.com/x/y/releases/tag/v1.3.0",
+				"assets": [
+					{"browser_download_url": "https://github.com/x/y/releases/download/v1.3.0/notes.txt"},
+					{
+						"browser_download_url": "https://github.com/x/y/releases/download/v1.3.0/cliHelper-1.3.0.nvda-addon"
+					},
+				],
+			}
+		)
+		self.assertEqual(release.version, "1.3.0")
+		self.assertTrue(release.downloadUrl.endswith("cliHelper-1.3.0.nvda-addon"))
+
+	def test_onlyOwnPackagesAreInstalled(self):
+		import tempfile
+		import zipfile
+
+		folder = tempfile.mkdtemp()
+		good, bad = os.path.join(folder, "good.nvda-addon"), os.path.join(folder, "bad.nvda-addon")
+		with zipfile.ZipFile(good, "w") as z:
+			z.writestr("manifest.ini", 'name = cliHelper\nsummary = "CLI Helper"\n')
+		with zipfile.ZipFile(bad, "w") as z:
+			z.writestr("manifest.ini", "name = somethingElse\n")
+		self.assertTrue(self.updater.isOwnPackage(good))
+		self.assertFalse(self.updater.isOwnPackage(bad))
+		self.assertFalse(self.updater.isOwnPackage(os.path.join(folder, "missing")))
+
+	def test_manualCheckReports(self):
+		u = self.updater
+		offered = []
+		original = u._offer
+		u._offer = lambda release, current: offered.append(release.version)
+		u.currentVersion = lambda: "1.3.0"
+		try:
+			u._onChecked(u.Release("1.3.0", "", None, ""), None, True)
+			self.assertEqual(spoken[-1], "CLI Helper 1.3.0 is the latest version.")
+			u._onChecked(None, IOError("offline"), True)
+			self.assertIn("Could not check for updates", spoken[-1])
+			u._onChecked(u.Release("1.4.0", "", None, ""), None, False)
+			self.assertEqual(offered, ["1.4.0"])
+			CONF["cliHelper"]["updateSkipVersion"] = "1.4.0"
+			u._onChecked(u.Release("1.4.0", "", None, ""), None, False)
+			self.assertEqual(offered, ["1.4.0"])
+			u._onChecked(u.Release("1.4.0", "", None, ""), None, True)
+			self.assertEqual(offered, ["1.4.0", "1.4.0"])
+		finally:
+			u._offer = original
+
+	def test_autoModeLeavesUpdatesToTheStoreWhenItUpdatesItself(self):
+		u = self.updater
+		CONF["cliHelper"]["updateCheck"] = "auto"
+		self.assertTrue(u.isEnabled())
+		CONF["addonStore"] = {"automaticUpdates": "update"}
+		try:
+			self.assertFalse(u.isEnabled())
+			CONF["cliHelper"]["updateCheck"] = "on"
+			self.assertTrue(u.isEnabled())
+		finally:
+			del CONF["addonStore"]
+
+
 class FocusTest(Base):
 	def test_missedTerminalFocusIsRecovered(self):
 		term = makeTerminal()
@@ -633,6 +864,11 @@ class ModeTest(Base):
 	def test_errorJumpCopiesTheLine(self):
 		self.run_key("kb:shift+e")
 		self.assertEqual(spoken[-1], "Error: boom")
+		self.assertEqual(beeps[-1], 1200)
+		CONF["cliHelper"]["tones"] = False
+		review["pos"] = FakeTextInfo(self.obj, 0)
+		self.run_key("kb:e")
+		self.assertEqual(spoken[-2:], ["Error: boom", "copied"])
 		self.assertEqual(clipboard[-1], "Error: boom")
 		CONF["cliHelper"]["copyErrorLines"] = False
 		del clipboard[:]

@@ -25,15 +25,13 @@ Speaks interactive prompts (selection lists, checkboxes and yes/no toggles such 
 reads the last command's output, announces when long commands finish, and adds a
 CLI mode with word-processor style reading, selection and copying. Press NVDA+Alt+C, then H for help."""),
 	# version
-	addon_version="1.2.0",
+	addon_version="1.3.0",
 	# Brief changelog for this version
 	# Translators: what's new content for the add-on version to be shown in the add-on store
-	addon_changelog=_("""New: progress bars and spinners (ollama, pip, npm, winget, docker, git) are read as a few percentages, beeps, or not at all, instead of every changing number.
-New: error summary: R reads the errors and warnings of the last command with file and line, Shift+R copies them; read automatically when a long command finishes.
-New: sounds for error, warning and success lines.
-New: command history window (Shift+H in CLI mode).
-Fixed: a newly opened PowerShell or Command Prompt was not recognised as a terminal until focus left and came back. A tone now confirms that CLI Helper is active in a terminal.
-Settings are now in groups, and every new feature can be configured."""),
+	addon_changelog=_("""Fixed: in selection lists, the arrow keys sometimes read the whole list instead of only the new choice.
+New: CLI Helper checks GitHub for new versions once a day and offers to install them (U in CLI mode, or in settings).
+Changed: all beeps and sounds are now off by default; speech says everything. Turn them on in settings.
+Changed: questions of interactive prompts are read without key hints such as "Use arrow-keys"."""),
 	# Author(s)
 	addon_author="Naeem Hashmi",
 	# URL for the add-on documentation support
